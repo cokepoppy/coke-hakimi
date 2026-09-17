@@ -12,10 +12,12 @@ import {
   postKey,
 } from './macos';
 import { AgentRegistry } from './agent-adapter';
+import { SerialAudioSink } from './audio';
 import { identifyP4Chip } from './firmware';
 import {
   encodeMessage,
   parseMessage,
+  type AudioPcmPayload,
   type BridgeState,
   type DeviceMessage,
   type DevicePortInfo,
@@ -61,8 +63,12 @@ class HakimiSerial {
     this.parser.on('data', (line: string) => {
       const message = parseMessage(line);
       if (message) {
-        lastMessage = message;
-        broadcast('device-message', message);
+        // PCM packets can be several kilobytes per second. Do not copy their
+        // Base64 body into the UI log or the bridge state snapshot.
+        if (message.topic !== 'audio/pcm') {
+          lastMessage = message;
+          broadcast('device-message', message);
+        }
         void handleDeviceMessage(message);
       }
       else broadcast('serial-line', String(line).slice(0, 500));
@@ -106,10 +112,16 @@ const agents = new AgentRegistry();
 let lastMessage: DeviceMessage | undefined;
 let lastError: string | undefined;
 let voiceKeyDown = false;
+let audioMonitor = false;
 let lastDeviceAgentKey = '';
 let audioInputsCache: Awaited<ReturnType<typeof listAudioInputs>> = [];
 let audioInputsCachedAt = 0;
 let chipIdentity: Awaited<ReturnType<typeof identifyP4Chip>> | undefined;
+let audioFramesReceived = 0;
+let audioFramesForwarded = 0;
+let audioFramesDropped = 0;
+let audioLastPacketAt: number | undefined;
+const audioSink = new SerialAudioSink((line) => broadcast('serial-audio-line', line));
 
 function broadcast(channel: string, payload: unknown): void {
   for (const target of BrowserWindow.getAllWindows()) target.webContents.send(channel, payload);
@@ -121,16 +133,22 @@ async function state(): Promise<BridgeState> {
     audioInputsCache = await listAudioInputs();
     audioInputsCachedAt = Date.now();
   }
-  const hasHakimiMicrophone = audioInputsCache.some((item) => /hakimi microphone/i.test(item.name));
+  const hasBlackHole = audioInputsCache.some((item) => /blackhole/i.test(item.name));
+  const sinkStats = audioSink.stats();
   return {
     connected: serial.isConnected(),
     port: serial.info(),
     chip: chipIdentity,
-    audioMode: 'native-uac',
+    audioMode: 'serial-blackhole',
     audioInputs: audioInputsCache,
-    audioDeviceHint: hasHakimiMicrophone
-      ? 'Hakimi Microphone 已被 macOS 识别'
-      : '未发现 Hakimi Microphone；请先刷入 UAC 固件并切到原生 USB',
+    audioDeviceHint: hasBlackHole
+      ? `${sinkStats.deviceName} 已被 macOS 识别；点击音频测试即可转发串口麦克风`
+      : '未发现 BlackHole 2ch；请安装后再点击音频测试',
+    audioForwarding: voiceKeyDown || audioMonitor,
+    audioFramesReceived,
+    audioFramesForwarded,
+    audioFramesDropped,
+    audioLastPacketAt,
     accessibilityTrusted: await accessibilityTrusted(),
     codexRunning: snapshots.some((item) => item.agentId === 'codex' && item.state !== 'idle'),
     snapshots,
@@ -195,7 +213,69 @@ async function endVoiceInput(): Promise<void> {
   await publishState();
 }
 
+function shouldForwardAudio(): boolean {
+  return voiceKeyDown || audioMonitor;
+}
+
+async function startAudioMonitor(): Promise<{ ok: boolean; detail: string }> {
+  audioMonitor = true;
+  try {
+    await audioSink.start();
+    const detail = `已开始串口音频测试：${audioSink.stats().deviceName}；请在豆包中选择该输入设备`;
+    broadcast('bridge-action', { type: 'audio', phase: 'start', detail });
+    await publishState();
+    return { ok: true, detail };
+  } catch (error) {
+    audioMonitor = false;
+    lastError = error instanceof Error ? error.message : String(error);
+    broadcast('bridge-error', lastError);
+    await publishState();
+    return { ok: false, detail: lastError };
+  }
+}
+
+async function stopAudioMonitor(): Promise<{ ok: boolean; detail: string }> {
+  audioMonitor = false;
+  if (!voiceKeyDown) await audioSink.stop();
+  const detail = '已停止串口音频测试';
+  broadcast('bridge-action', { type: 'audio', phase: 'stop', detail });
+  await publishState();
+  return { ok: true, detail };
+}
+
+function handleAudioPcm(message: DeviceMessage): void {
+  const payload = message.payload as Partial<AudioPcmPayload> | undefined;
+  if (!payload || typeof payload.dataBase64 !== 'string') return;
+  if (payload.encoding !== 's16le' || payload.sampleRate !== 16_000 || payload.channels !== 1) {
+    lastError = '收到不支持的串口音频格式：需要 16 kHz / 单声道 / s16le';
+    return;
+  }
+  audioFramesReceived += 1;
+  audioLastPacketAt = Date.now();
+  if (!shouldForwardAudio()) return;
+  let pcm: Buffer;
+  try {
+    pcm = Buffer.from(payload.dataBase64, 'base64');
+  } catch {
+    audioFramesDropped += 1;
+    return;
+  }
+  void audioSink.start().then(() => {
+    if (!shouldForwardAudio()) return;
+    if (audioSink.write(pcm)) audioFramesForwarded += 1;
+    else audioFramesDropped += 1;
+  }).catch((error) => {
+    audioFramesDropped += 1;
+    lastError = error instanceof Error ? error.message : String(error);
+    broadcast('bridge-error', lastError);
+  });
+}
+
 async function handleDeviceMessage(message: DeviceMessage): Promise<void> {
+  if (message.topic === 'audio/pcm') {
+    handleAudioPcm(message);
+    return;
+  }
   if (message.topic !== 'input/event' || !message.payload) return;
   const payload = message.payload;
   const event = normalizedEvent(payload);
@@ -260,6 +340,8 @@ function registerIpc(): void {
   });
   ipcMain.handle('mac:key', (_event, name: string, phase: 'down' | 'up' | 'tap') => postKey(name, phase));
   ipcMain.handle('mac:command-tab', () => commandTab());
+  ipcMain.handle('audio:test-start', () => startAudioMonitor());
+  ipcMain.handle('audio:test-stop', () => stopAudioMonitor());
   ipcMain.handle('app:open-docs', () => shell.openExternal('https://github.com/YizhengWw/HachimoDock'));
 }
 
@@ -291,6 +373,10 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('before-quit', () => {
+  void audioSink.stop();
 });
 
 process.on('uncaughtException', (error) => {

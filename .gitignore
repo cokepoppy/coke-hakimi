@@ -4,3 +4,7 @@ reference/frames/
 agent-bridge/firmware/uac/.pio/
 agent-bridge/firmware/uac/managed_components/
 agent-bridge/firmware/uac/sdkconfig.hakimi_uac_v3
+agent-bridge/firmware/*/.pio/
+agent-bridge/firmware/*/managed_components/
+agent-bridge/firmware/*/dependencies.lock
+agent-bridge/firmware/*/sdkconfig.hakimi_*

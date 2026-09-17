@@ -20,6 +20,17 @@ export type AudioInputInfo = {
   isDefaultInput: boolean;
 };
 
+export type AudioMode = 'serial-blackhole' | 'native-uac';
+
+export type AudioPcmPayload = {
+  seq?: number;
+  sampleRate: number;
+  channels: 1;
+  bitsPerSample: 16;
+  encoding: 's16le';
+  dataBase64: string;
+};
+
 export type ChipIdentity = {
   chip: 'ESP32-P4' | 'unknown';
   revisionText: string;
@@ -55,9 +66,14 @@ export type BridgeState = {
   connected: boolean;
   port?: DevicePortInfo;
   chip?: ChipIdentity;
-  audioMode: 'native-uac';
+  audioMode: AudioMode;
   audioInputs: AudioInputInfo[];
   audioDeviceHint: string;
+  audioForwarding: boolean;
+  audioFramesReceived: number;
+  audioFramesForwarded: number;
+  audioFramesDropped: number;
+  audioLastPacketAt?: number;
   accessibilityTrusted: boolean;
   codexRunning: boolean;
   snapshots: AgentSnapshot[];

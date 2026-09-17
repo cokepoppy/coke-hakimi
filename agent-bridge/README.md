@@ -11,13 +11,14 @@ Independent macOS Electron + TypeScript bridge for the custom ESP32-P4 Hakimi fi
 - Has a vendor-neutral `AgentSnapshot` boundary with initial best-effort Codex and Claude Code adapters.
 - Detects the connected P4 chip revision through `esptool` and records the V1/V3 family before any future firmware update.
 - Maps `input/event` packets to voice PTT, cursor arrows, Backspace, Enter, and Command+Tab.
-- Ships a V3-only UAC microphone proof under `firmware/uac/`; the proof is intentionally not flashed automatically.
+- Ships an earlier V3-only native USB UAC proof under `firmware/uac/` for fallback/reference.
+- Ships the active V3-only serial microphone proof under `firmware/serial-audio/`.
 
-The current ESP32 Hello World firmware is not yet a standard macOS microphone. The
-UAC proof exposes a standard `Hakimi Microphone` on the P4 native USB OTG path;
-the final device image still needs a composite UAC + control descriptor so audio
-and buttons can share one native USB cable. The audio bytes go directly from the
-ESP32 to macOS audio; Electron must not run ASR.
+The accepted bring-up path keeps the top Type-C selector on `UART / CH343`.
+The serial-audio image reads the Waveshare ES8311 microphone at 16 kHz and sends
+20 ms PCM frames as JSONL. Electron forwards them to the macOS `BlackHole 2ch`
+virtual microphone only while voice PTT or the explicit audio test is active;
+Electron does not run ASR, so Doubao remains responsible for speech-to-text.
 
 ## Run
 
@@ -27,11 +28,19 @@ npm run typecheck
 npm start
 ```
 
-To rebuild only the V3 UAC proof:
+Install the one-time virtual input driver if `BlackHole 2ch` is not listed by
+the app:
+
+```bash
+brew install --cask blackhole-2ch
+```
+
+To rebuild the active V3 serial-audio proof (official `esp_codec_dev` plus the
+Waveshare P4 pin map):
 
 ```bash
 ~/.platformio/penv/bin/platformio run \
-  --project-dir firmware/uac -e hakimi_uac_v3
+  --project-dir firmware/serial-audio -e hakimi_serial_audio_v3
 ```
 
 The app needs macOS Accessibility permission for window focus and synthetic key events. The default adapter intentionally treats log formats as unstable and keeps the adapter boundary separate from the renderer.

@@ -2,10 +2,13 @@ import Foundation
 import AppKit
 import ApplicationServices
 import CoreGraphics
+import AVFoundation
+import AudioToolbox
 
 // Small, dependency-free macOS primitive used by the Electron bridge. The
-// helper deliberately exposes only focus and keyboard operations: audio is
-// owned by CoreAudio/UAC and never passes through this process.
+// helper deliberately exposes small focus, keyboard, and CoreAudio operations.
+// Raw PCM is kept out of Electron's renderer and is consumed by a native
+// CoreAudio source node when the serial-blackhole path is active.
 
 func emit(_ values: [String: Any]) {
     let data = try? JSONSerialization.data(withJSONObject: values, options: [])
@@ -203,6 +206,165 @@ func sendCommandTab() {
     emit(["ok": true, "detail": "Command+Tab"])
 }
 
+final class FloatRingBuffer {
+    private let lock = NSLock()
+    private var values: [Float]
+    private var readIndex = 0
+    private var writeIndex = 0
+    private var count = 0
+
+    init(capacity: Int) {
+        values = Array(repeating: 0, count: capacity)
+    }
+
+    func push(_ value: Float) {
+        lock.lock()
+        values[writeIndex] = value
+        writeIndex = (writeIndex + 1) % values.count
+        if count == values.count {
+            readIndex = (readIndex + 1) % values.count
+        } else {
+            count += 1
+        }
+        lock.unlock()
+    }
+
+    func pop(into destination: UnsafeMutablePointer<Float>, count requested: Int) -> Int {
+        lock.lock()
+        let amount = min(requested, count)
+        if amount > 0 {
+            for index in 0..<amount {
+                destination[index] = values[readIndex]
+                readIndex = (readIndex + 1) % values.count
+            }
+            count -= amount
+        }
+        lock.unlock()
+        return amount
+    }
+}
+
+func audioDeviceID(named query: String) -> AudioDeviceID? {
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDevices,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var dataSize: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(
+        AudioObjectID(kAudioObjectSystemObject),
+        &address,
+        0,
+        nil,
+        &dataSize
+    ) == noErr else { return nil }
+    let count = Int(dataSize) / MemoryLayout<AudioDeviceID>.stride
+    var devices = Array(repeating: AudioDeviceID(0), count: count)
+    guard AudioObjectGetPropertyData(
+        AudioObjectID(kAudioObjectSystemObject),
+        &address,
+        0,
+        nil,
+        &dataSize,
+        &devices
+    ) == noErr else { return nil }
+    let needle = query.lowercased()
+    for device in devices {
+        var name: Unmanaged<CFString>?
+        var nameSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.stride)
+        var nameAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let status = withUnsafeMutablePointer(to: &name) { pointer in
+            AudioObjectGetPropertyData(device, &nameAddress, 0, nil, &nameSize, pointer)
+        }
+        guard status == noErr, let name else { continue }
+        let value = name.takeUnretainedValue() as String
+        if value.lowercased() == needle || value.lowercased().contains(needle) {
+            return device
+        }
+    }
+    return nil
+}
+
+func setCurrentOutputDevice(_ device: AudioDeviceID, on outputNode: AVAudioOutputNode) -> OSStatus {
+    guard let audioUnit = outputNode.audioUnit else { return -1 }
+    var device = device
+    return AudioUnitSetProperty(
+        audioUnit,
+        kAudioOutputUnitProperty_CurrentDevice,
+        kAudioUnitScope_Global,
+        0,
+        &device,
+        UInt32(MemoryLayout<AudioDeviceID>.stride)
+    )
+}
+
+func startAudioSink(_ deviceName: String) -> Never {
+    guard let device = audioDeviceID(named: deviceName) else {
+        fail("找不到 macOS 音频设备：\(deviceName)。请先安装 BlackHole 2ch，或设置 HAKIMI_VIRTUAL_MIC")
+    }
+    guard let format = AVAudioFormat(
+        commonFormat: .pcmFormatFloat32,
+        sampleRate: 16_000,
+        channels: 1,
+        interleaved: false
+    ) else { fail("无法创建 16 kHz 音频格式") }
+
+    let ring = FloatRingBuffer(capacity: 16_000 * 2)
+    let engine = AVAudioEngine()
+    let source = AVAudioSourceNode(format: format) { _, _, frameCount, audioBufferList in
+        let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
+        for buffer in buffers {
+            guard let data = buffer.mData else { continue }
+            let destination = data.assumingMemoryBound(to: Float.self)
+            let frames = min(Int(frameCount), Int(buffer.mDataByteSize) / MemoryLayout<Float>.stride)
+            let copied = ring.pop(into: destination, count: frames)
+            if copied < frames {
+                destination.advanced(by: copied).initialize(repeating: 0, count: frames - copied)
+            }
+        }
+        return noErr
+    }
+    engine.attach(source)
+    engine.connect(source, to: engine.mainMixerNode, format: format)
+    let deviceStatus = setCurrentOutputDevice(device, on: engine.outputNode)
+    guard deviceStatus == noErr else {
+        fail("无法把 CoreAudio 输出切到 \(deviceName)，OSStatus=\(deviceStatus)")
+    }
+    do {
+        try engine.start()
+    } catch {
+        fail("启动 CoreAudio 音频输出失败：\(error.localizedDescription)")
+    }
+    emit(["ok": true, "ready": true, "detail": "CoreAudio 已输出到 \(deviceName)，等待串口 PCM"])
+
+    // SerialAudioSink writes little-endian signed 16-bit samples. Keep one
+    // possible odd byte between reads so a USB/serial chunk boundary cannot
+    // shift the sample alignment.
+    var pending = Data()
+    while true {
+        let incoming = FileHandle.standardInput.readData(ofLength: 8192)
+        if incoming.isEmpty { break }
+        pending.append(incoming)
+        let usable = pending.count - (pending.count % 2)
+        if usable == 0 { continue }
+        pending.withUnsafeBytes { raw in
+            guard let bytes = raw.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            for offset in stride(from: 0, to: usable, by: 2) {
+                let bits = UInt16(bytes[offset]) | (UInt16(bytes[offset + 1]) << 8)
+                let sample = Int16(bitPattern: bits)
+                ring.push(Float(sample) / 32_768.0)
+            }
+        }
+        pending.removeFirst(usable)
+    }
+    engine.stop()
+    exit(0)
+}
+
 let args = Array(CommandLine.arguments.dropFirst())
 guard let command = args.first else { fail("缺少命令") }
 
@@ -220,6 +382,8 @@ case "key":
     sendKey(args[1], args[2])
 case "command-tab":
     sendCommandTab()
+case "audio-sink":
+    startAudioSink(args.count >= 2 ? args[1] : "BlackHole 2ch")
 default:
     fail("未知命令：\(command)")
 }

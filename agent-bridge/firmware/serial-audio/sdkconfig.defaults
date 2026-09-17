@@ -1,0 +1,8 @@
+# V3-only serial audio proof. The board was identified as ESP32-P4 revision
+# v3.2; the post-build script enforces the v3.01-v3.99 bounds in the image.
+CONFIG_IDF_TARGET_ESP32P4=y
+CONFIG_CODEC_ES8311_SUPPORT=y
+CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="32MB"
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_FREERTOS_HZ=1000

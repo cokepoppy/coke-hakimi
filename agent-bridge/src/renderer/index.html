@@ -28,12 +28,16 @@
           </div>
           <div class="chip-row"><span class="muted">固件安全门</span><strong id="chip-status" class="status-chip pending">尚未读取芯片版本</strong></div>
           <div class="status-grid">
-            <div><span class="muted">音频路径</span><strong id="audio-status" class="status-chip pending">等待原生 USB Audio</strong></div>
+            <div><span class="muted">音频路径</span><strong id="audio-status" class="status-chip pending">串口 PCM → BlackHole</strong></div>
             <div><span class="muted">macOS 权限</span><strong id="a11y-status" class="status-chip pending">辅助功能：检测中</strong></div>
           </div>
           <div class="audio-head"><span class="muted">macOS 音频输入清单（只读）</span><button id="refresh-audio">刷新音频</button></div>
           <div id="audio-inputs" class="audio-inputs">正在检测…</div>
-          <div class="callout"><strong>音频设计</strong><p>ESP32 原生 USB UAC → macOS 音频设备 → 豆包输入法。Electron 不读取麦克风，也不做 ASR；这里只检测系统是否看到了 Hakimi Microphone。</p></div>
+          <div class="callout"><strong>音频设计</strong><p>ESP32 麦克风 → 顶部 Type-C 的 CH343 串口 → Electron → BlackHole 2ch → 豆包输入法。Electron 不做 ASR；点击下面的测试按钮后，才会把串口 PCM 转发给虚拟麦克风。</p></div>
+          <div class="control-grid audio-test-grid">
+            <button id="audio-test-start" class="primary">开始音频测试</button>
+            <button id="audio-test-stop">停止音频测试</button>
+          </div>
         </div>
 
         <div class="panel control-panel">

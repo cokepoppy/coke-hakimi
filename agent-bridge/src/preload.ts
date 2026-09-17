@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('hakimiBridge', {
   activate: (appName: string): Promise<void> => ipcRenderer.invoke('mac:activate', appName),
   key: (name: string, phase: 'down' | 'up' | 'tap'): Promise<{ ok: boolean; detail: string }> => ipcRenderer.invoke('mac:key', name, phase),
   commandTab: (): Promise<{ ok: boolean; detail: string }> => ipcRenderer.invoke('mac:command-tab'),
+  startAudioTest: (): Promise<{ ok: boolean; detail: string }> => ipcRenderer.invoke('audio:test-start'),
+  stopAudioTest: (): Promise<{ ok: boolean; detail: string }> => ipcRenderer.invoke('audio:test-stop'),
   openDocs: (): Promise<void> => ipcRenderer.invoke('app:open-docs'),
   onState: (callback: (state: BridgeState) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: BridgeState) => callback(state);
@@ -28,6 +30,11 @@ contextBridge.exposeInMainWorld('hakimiBridge', {
     const listener = (_event: Electron.IpcRendererEvent, line: string) => callback(line);
     ipcRenderer.on('serial-line', listener);
     return () => ipcRenderer.removeListener('serial-line', listener);
+  },
+  onSerialAudioLine: (callback: (line: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, line: string) => callback(line);
+    ipcRenderer.on('serial-audio-line', listener);
+    return () => ipcRenderer.removeListener('serial-audio-line', listener);
   },
   onError: (callback: (message: string) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, message: string) => callback(message);

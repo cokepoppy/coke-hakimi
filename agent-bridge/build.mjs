@@ -11,6 +11,8 @@ if (process.platform === 'darwin') {
     '-framework', 'AppKit',
     '-framework', 'ApplicationServices',
     '-framework', 'CoreGraphics',
+    '-framework', 'AVFoundation',
+    '-framework', 'AudioToolbox',
     'native/macos-helper/main.swift',
     '-o', 'dist/macos-helper',
   ], { stdio: 'inherit' });

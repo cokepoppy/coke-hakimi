@@ -14,10 +14,13 @@ declare global {
       activate(appName: string): Promise<void>;
       key(name: string, phase: 'down' | 'up' | 'tap'): Promise<{ ok: boolean; detail: string }>;
       commandTab(): Promise<{ ok: boolean; detail: string }>;
+      startAudioTest(): Promise<{ ok: boolean; detail: string }>;
+      stopAudioTest(): Promise<{ ok: boolean; detail: string }>;
       openDocs(): Promise<void>;
       onState(callback: (state: BridgeState) => void): () => void;
       onDeviceMessage(callback: (message: DeviceMessage) => void): () => void;
       onSerialLine(callback: (line: string) => void): () => void;
+      onSerialAudioLine(callback: (line: string) => void): () => void;
       onError(callback: (message: string) => void): () => void;
       onAction(callback: (action: { type: string; phase?: string; event?: string; detail: string }) => void): () => void;
     };
@@ -52,9 +55,9 @@ function render(state: BridgeState): void {
     ? `${state.chip.chip} ${state.chip.revisionText} · 选择 ${state.chip.family.toUpperCase()}`
     : '尚未读取芯片版本';
   chipStatus.className = `status-chip ${state.chip?.family === 'v3' ? 'online' : 'pending'}`;
-  const hakimiMic = state.audioInputs.find((item) => /hakimi microphone/i.test(item.name));
-  audioStatus.textContent = hakimiMic ? `已发现 ${hakimiMic.name}` : state.audioDeviceHint;
-  audioStatus.className = `status-chip ${hakimiMic ? 'online' : 'pending'}`;
+  const blackHole = state.audioInputs.find((item) => /blackhole/i.test(item.name));
+  audioStatus.textContent = state.audioForwarding ? `正在转发到 ${blackHole?.name || 'BlackHole 2ch'}` : state.audioDeviceHint;
+  audioStatus.className = `status-chip ${blackHole ? 'online' : 'pending'}`;
   audioInputs.replaceChildren();
   if (!state.audioInputs.length) {
     audioInputs.textContent = '暂未发现音频输入设备';
@@ -114,6 +117,16 @@ $('#refresh-audio').addEventListener('click', async () => {
   render(state);
   log(`音频输入设备：${inputs.map((item) => item.name).join(', ') || '无'}`);
 });
+$('#audio-test-start').addEventListener('click', async () => {
+  const value = await window.hakimiBridge.startAudioTest();
+  log(value.detail);
+  result.textContent = value.detail;
+});
+$('#audio-test-stop').addEventListener('click', async () => {
+  const value = await window.hakimiBridge.stopAudioTest();
+  log(value.detail);
+  result.textContent = value.detail;
+});
 $('#connect').addEventListener('click', async () => {
   if (!ports.value) return;
   try {
@@ -162,6 +175,7 @@ $('#docs').addEventListener('click', () => void window.hakimiBridge.openDocs());
 window.hakimiBridge.onState(render);
 window.hakimiBridge.onDeviceMessage((message) => log(`设备事件：${JSON.stringify(message)}`));
 window.hakimiBridge.onSerialLine((line) => log(`串口：${line}`));
+window.hakimiBridge.onSerialAudioLine((line) => log(`音频辅助器：${line}`));
 window.hakimiBridge.onError((message) => {
   log(`错误：${message}`);
   result.textContent = message;
