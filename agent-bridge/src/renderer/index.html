@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hakimi Agent Bridge</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">HAKIMI AGENT BRIDGE / MACOS</div>
+          <h1>哈基米 · Agent 中介</h1>
+          <p>设备麦克风 → 豆包输入法；Agent 状态 → 哈基米屏幕</p>
+        </div>
+        <button id="docs" class="ghost">打开参考仓库</button>
+      </header>
+
+      <section class="grid">
+        <div class="panel device-panel">
+          <div class="panel-head"><div><span class="eyebrow">DEVICE</span><h2>设备连接</h2></div><span id="state-summary" class="connection offline">设备未连接</span></div>
+          <div class="connect-row">
+            <select id="ports" aria-label="串口设备"></select>
+            <button id="refresh">刷新</button>
+            <button id="identify-chip">检测 V1/V3</button>
+            <button id="connect" class="primary">连接</button>
+            <button id="disconnect">断开</button>
+          </div>
+          <div class="chip-row"><span class="muted">固件安全门</span><strong id="chip-status" class="status-chip pending">尚未读取芯片版本</strong></div>
+          <div class="status-grid">
+            <div><span class="muted">音频路径</span><strong id="audio-status" class="status-chip pending">等待原生 USB Audio</strong></div>
+            <div><span class="muted">macOS 权限</span><strong id="a11y-status" class="status-chip pending">辅助功能：检测中</strong></div>
+          </div>
+          <div class="audio-head"><span class="muted">macOS 音频输入清单（只读）</span><button id="refresh-audio">刷新音频</button></div>
+          <div id="audio-inputs" class="audio-inputs">正在检测…</div>
+          <div class="callout"><strong>音频设计</strong><p>ESP32 原生 USB UAC → macOS 音频设备 → 豆包输入法。Electron 不读取麦克风，也不做 ASR；这里只检测系统是否看到了 Hakimi Microphone。</p></div>
+        </div>
+
+        <div class="panel control-panel">
+          <div class="panel-head"><div><span class="eyebrow">MAC CONTROL</span><h2>Mac 控制测试</h2></div></div>
+          <div class="control-grid">
+            <button id="focus-codex" class="primary wide">唤起并聚焦 Codex</button>
+            <button id="test-fn">测试 Fn / 豆包</button>
+            <button id="test-backspace">测试退格</button>
+            <button id="test-left">← 左方向键</button>
+            <button id="test-right">右方向键 →</button>
+            <button id="test-cmdtab">测试 Command+Tab</button>
+          </div>
+          <div id="result" class="result">尚未执行控制动作</div>
+        </div>
+      </section>
+
+      <section class="panel agents-panel">
+        <div class="panel-head"><div><span class="eyebrow">AGENT OUTPUT ADAPTERS</span><h2>当前 Agent 状态</h2></div><span class="muted">只读观察 · 通用格式</span></div>
+        <div id="agent-list" class="agent-list"></div>
+        <div class="callout mapping"><strong>默认硬件映射</strong><p>SW1 长按：语音按住说；摇杆左/右：输入框光标；摇杆中心：回车；SW2 短按：退格；SW3 短按：Command+Tab。后续会把这些映射做成设置项。</p></div>
+      </section>
+
+      <section class="panel logs-panel">
+        <div class="panel-head"><div><span class="eyebrow">LIVE DIAGNOSTICS</span><h2>设备和桥接日志</h2></div><span class="muted">最近 80 条</span></div>
+        <div id="logs" class="logs"></div>
+      </section>
+    </main>
+    <script src="./renderer.js"></script>
+  </body>
+</html>

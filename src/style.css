@@ -1,0 +1,63 @@
+:root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; color: #f7f8fb; background: #0d1016; font-synthesis: none; }
+.lesson-caption { position:absolute; top:22px; left:24px; pointer-events:none; display:grid; gap:8px; padding:16px 20px; background:#131b29ed; border:1px solid #44516a; border-radius:14px; }
+.lesson-caption small { color:#ffb67e; font-size:12px; }
+.lesson-caption strong { font-size:26px; }
+.lesson-caption span { color:#b9c7dc; font-size:12px; }
+#stepList { max-height:340px; overflow-y:auto; }
+button:disabled { opacity:.35; cursor:default; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 1060px; background: radial-gradient(circle at 70% -10%, #202c42 0, #0d1016 45rem); }
+button, input { font: inherit; }
+.shell { width: min(1540px, calc(100vw - 44px)); margin: 0 auto; padding: 26px 0 22px; }
+.topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
+.brand { display: flex; align-items: center; gap: 13px; }
+.brand-mark { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 12px; color: #161922; background: #ff9b5b; box-shadow: 0 8px 26px #ff9b5b44; font-size: 24px; }
+.eyebrow { color: #9ba5b8; font: 700 10px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 1.7px; }
+h1, h2, p { margin: 0; } h1 { margin-top: 4px; font-size: 21px; letter-spacing: -.3px; } h2 { margin-top: 4px; font-size: 18px; }
+.status { color: #b9c2d2; font-size: 12px; }.dot { display: inline-block; width: 7px; height: 7px; margin-right: 5px; border-radius: 50%; background: #7ee6a4; box-shadow: 0 0 0 4px #7ee6a422; }.sep { margin: 0 9px; color: #596275; }
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; min-height: 665px; }
+.stage-card, .side-card, .timeline { border: 1px solid #313948; border-radius: 18px; background: linear-gradient(145deg, #171c25, #12161e); box-shadow: 0 18px 60px #00000044; overflow: hidden; }
+.stage-card { position: relative; min-height: 665px; }.stage { position: absolute; inset: 0; }.stage canvas { display: block; width: 100%; height: 100%; }
+.stage-toolbar { position: absolute; left: 18px; right: 18px; bottom: 15px; display: flex; align-items: center; gap: 8px; }.tool-btn, .round-btn, .play-btn { cursor: pointer; border: 1px solid #404a5d; border-radius: 10px; color: #dfe5ee; background: #1d2430dd; transition: .2s ease; }.tool-btn { padding: 8px 12px; font-size: 12px; }.tool-btn:hover, .round-btn:hover { border-color: #ff9b5b; color: #ffbd8e; }.stage-tip { margin-left: auto; color: #8e99ac; font-size: 11px; }
+.loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #b9c2d2; padding: 12px 15px; border: 1px solid #3d4657; border-radius: 10px; background: #171c25dd; font-size: 12px; }.loading.error { color: #ffb2a9; }.spinner { display: inline-block; width: 12px; height: 12px; margin-right: 8px; vertical-align: -2px; border: 2px solid #526074; border-top-color: #ff9b5b; border-radius: 50%; animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+.side-card { padding: 21px 19px; }.side-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }.badge { flex: 0 0 auto; margin-top: 3px; padding: 4px 8px; border: 1px solid #8f5f43; border-radius: 999px; color: #ffc59d; background: #3a271f; font-size: 10px; }.step-hint { min-height: 53px; margin: 13px 0 14px; color: #b9c2d2; font-size: 12px; line-height: 1.65; }
+.step-list { display: grid; gap: 5px; }.step-item { display: grid; grid-template-columns: 31px 1fr 16px; align-items: center; width: 100%; padding: 9px 8px; cursor: pointer; border: 1px solid transparent; border-radius: 11px; color: #aeb8ca; background: transparent; text-align: left; }.step-item:hover { background: #222a38; }.step-item.active { border-color: #85563d; color: #fff; background: linear-gradient(90deg, #3e2c25, #242a35); }.step-no { color: #7b879a; font: 700 11px ui-monospace, monospace; }.step-item.active .step-no { color: #ffad79; }.step-copy { display: grid; gap: 2px; }.step-copy strong { font-size: 12px; font-weight: 650; }.step-copy small { color: #7e899b; font-size: 10px; }.step-chevron { color: #667287; font-size: 21px; line-height: 1; }.step-item.active .step-chevron { color: #ffad79; }
+.warning { display: flex; gap: 9px; margin-top: 15px; padding: 11px 12px; border: 1px solid #775847; border-radius: 11px; background: #2c211d; color: #ffc7a2; }.warning > span { font-size: 16px; }.warning strong { font-size: 11px; }.warning p { margin-top: 4px; color: #caa18e; font-size: 10px; line-height: 1.55; }.legend { display: flex; gap: 10px; margin-top: 14px; color: #778399; font-size: 10px; }.swatch { display: inline-block; width: 7px; height: 7px; margin-right: 4px; border-radius: 50%; background: #7ee6a4; }.swatch.cyan { background: #64d5ff; }.swatch.orange { background: #ff9b5b; }
+.micro-guide { margin: 14px 0 2px; padding: 12px; border: 1px solid #47536a; border-radius: 12px; background: #172131; color: #dce5f2; }
+.micro-guide[hidden] { display: none; }
+.micro-guide-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.micro-guide-head strong { color: #fff; font-size: 12px; }
+.micro-guide-head span { color: #9fb2ca; font-size: 10px; }
+.cable-route { display: grid; grid-template-columns: 1fr 17px 1.05fr 17px 1fr; gap: 3px; align-items: center; margin: 10px 0; }
+.route-port, .route-cable { min-height: 39px; display: grid; place-items: center; padding: 5px 3px; border-radius: 7px; text-align: center; font-size: 10px; line-height: 1.35; }
+.route-port b, .route-cable b { font-size: 11px; }
+.route-port.purple { border: 1px solid #9a69b8; background: #3b2849; }
+.route-port.green { border: 1px solid #5ca88d; background: #1c4139; }
+.route-cable { border: 1px solid #8190a5; background: #253040; }
+.route-cable i { display: block; width: 42px; height: 4px; margin-bottom: 3px; border-radius: 2px; background: #dce3e8; box-shadow: 0 -3px #3279d2; }
+.route-arrow { color: #ffad79; font-size: 16px; text-align: center; }
+.micro-steps { display: grid; gap: 6px; margin: 0; padding: 0 0 0 19px; color: #b9c7da; font-size: 10px; line-height: 1.45; }
+.micro-steps li { padding-left: 2px; }
+.micro-steps b { display: inline-block; min-width: 48px; color: #ffbd8e; font-size: 11px; }
+.micro-steps span { color: #b9c7da; }
+.orientation-note { display: grid; gap: 4px; margin-top: 9px; padding-top: 8px; border-top: 1px solid #354257; color: #c5d0df; font-size: 10px; }
+.orientation-note i { display: inline-block; width: 22px; height: 7px; margin-right: 6px; vertical-align: -1px; border-radius: 2px; }
+.blue-face i { background: #2e8ceb; }.contact-face i { background: #d9e0e3; }
+.micro-phase { margin-top: 9px; padding: 7px 8px; border-radius: 7px; color: #ffca9e; background: #3a2a24; font-size: 10px; line-height: 1.4; }
+.timeline { margin-top: 16px; padding: 17px 21px 15px; }.timeline-head { display: flex; align-items: center; justify-content: space-between; }.timeline-label { display: flex; align-items: baseline; gap: 9px; margin-top: 5px; }.timeline-label span { color: #ffad79; font: 700 15px ui-monospace, monospace; }.timeline-label strong { font-size: 15px; }.playback { display: flex; gap: 8px; }.round-btn { width: 35px; height: 34px; font-size: 22px; line-height: 1; }.play-btn { height: 34px; padding: 0 14px; border-color: #ff9b5b; color: #171a21; background: #ff9b5b; font-size: 12px; font-weight: 700; }.play-btn:hover { background: #ffb37f; }.progress { width: 100%; margin-top: 16px; accent-color: #ff9b5b; }.timecodes { display: flex; justify-content: space-between; margin-top: 2px; color: #79859a; font: 10px ui-monospace, monospace; }
+@media (max-width: 1180px) { body { min-width: 920px; }.workspace { grid-template-columns: minmax(0, 1fr) 325px; }.shell { width: calc(100vw - 28px); } }
+@media (max-width: 900px) {
+  body { min-width: 0; }
+  .shell { width: calc(100% - 24px); padding-top: 14px; display: flex; flex-direction: column; }
+  .topbar { flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+  .workspace { display: contents; }
+  .stage-card { order: 1; min-height: 460px; height: 60vh; }
+  .timeline { order: 2; margin: 10px 0; padding: 12px; }
+  .side-card { order: 3; }
+  .lesson-caption { top: 12px; left: 12px; right: 12px; padding: 12px; }
+  .lesson-caption strong { font-size: 21px; }
+  .stage-toolbar { left: 10px; right: 10px; flex-wrap: wrap; }
+  .stage-tip { display: none; }
+  .timeline-head { flex-wrap: wrap; gap: 10px; }
+  #stepList { max-height: 235px; }
+}

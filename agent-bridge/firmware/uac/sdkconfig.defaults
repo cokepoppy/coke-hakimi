@@ -1,0 +1,18 @@
+# This proof image is intentionally V3-only. Do not use it for an unknown P4
+# revision or as a replacement for the full HachimoDock image.
+CONFIG_IDF_TARGET_ESP32P4=y
+CONFIG_TINYUSB_RHPORT_HS=y
+CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="32MB"
+
+# This proof owns its mic-only descriptor while using the official UAC class
+# driver. The interface numbers are supplied explicitly in the runtime config.
+CONFIG_USB_DEVICE_UAC_AS_PART=y
+CONFIG_UAC_SPEAKER_CHANNEL_NUM=0
+CONFIG_UAC_MIC_CHANNEL_NUM=1
+CONFIG_UAC_SAMPLE_RATE=16000
+CONFIG_UAC_BIT_RESOLUTION_16=y
+CONFIG_UAC_MIC_INTERVAL_MS=10
+CONFIG_UAC_SUPPORT_MACOS=y
+
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096

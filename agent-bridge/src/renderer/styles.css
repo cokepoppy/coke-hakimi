@@ -1,0 +1,53 @@
+:root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif; background: #0d1118; color: #f3f6fb; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 900px; background: radial-gradient(circle at 80% 0%, #1b2a38 0, #0d1118 42%); }
+button, select { font: inherit; color: inherit; }
+button { border: 1px solid #344254; background: #1a2230; border-radius: 9px; padding: 10px 13px; cursor: pointer; }
+button:hover { border-color: #7b9ab9; background: #243246; }
+button.primary { background: #4f8cff; border-color: #70a3ff; color: #08111e; font-weight: 700; }
+button.wide { grid-column: span 2; }
+select { flex: 1; min-width: 260px; border: 1px solid #344254; background: #121923; border-radius: 9px; padding: 10px; }
+.app-shell { max-width: 1260px; margin: 0 auto; padding: 30px; }
+.topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 25px; }
+h1, h2, p { margin: 0; }
+h1 { margin-top: 5px; font-size: 30px; letter-spacing: -.02em; }
+h2 { margin-top: 4px; font-size: 19px; }
+.topbar p { color: #91a0b2; margin-top: 8px; }
+.eyebrow { color: #80a7d2; font-size: 11px; letter-spacing: .14em; font-weight: 800; }
+.grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 16px; }
+.panel { border: 1px solid #293749; background: rgba(19, 26, 37, .92); border-radius: 16px; padding: 20px; box-shadow: 0 14px 35px rgba(0,0,0,.16); }
+.panel + .panel { margin-top: 16px; }
+.panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 17px; }
+.connect-row { display: flex; gap: 8px; align-items: center; }
+.chip-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.connection { white-space: nowrap; font-size: 12px; padding: 8px 10px; border-radius: 99px; }
+.connection.online, .status-chip.online { color: #9cf0bd; background: rgba(56, 151, 100, .18); }
+.connection.offline, .status-chip.pending { color: #ffcd93; background: rgba(161, 105, 45, .18); }
+.status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
+.status-grid > div { display: flex; flex-direction: column; gap: 8px; background: #151e2a; padding: 12px; border-radius: 10px; }
+.status-chip { width: fit-content; padding: 6px 9px; border-radius: 8px; font-size: 12px; font-weight: 600; }
+.audio-head { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; }
+.audio-head button { padding: 6px 9px; font-size: 12px; }
+.audio-inputs { margin-top: 8px; min-height: 38px; padding: 9px 11px; border-radius: 9px; background: #101722; color: #a9bbcf; font-size: 12px; }
+.audio-input-row { padding: 3px 0; }
+.muted { color: #8595a9; font-size: 12px; }
+.callout { margin-top: 16px; border-left: 3px solid #63b3ed; background: #142333; padding: 12px 14px; color: #c6d7e8; }
+.callout p { margin-top: 5px; line-height: 1.5; font-size: 13px; }
+.mapping { margin-top: 14px; }
+.control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.result { margin-top: 13px; min-height: 42px; padding: 11px 12px; background: #101722; border-radius: 9px; color: #a9bbcf; font-size: 13px; }
+.agents-panel { margin-top: 16px; }
+.agent-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+.agent-card { min-height: 130px; background: #131c27; border: 1px solid #2c3d50; border-left: 3px solid #62778e; border-radius: 11px; padding: 13px; }
+.agent-card.state-working { border-left-color: #55c7ff; }
+.agent-card.state-error { border-left-color: #ff7d7d; }
+.agent-card.state-done { border-left-color: #7fe3a5; }
+.agent-card-top { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; }
+.agent-card-top span { color: #95b8d7; }
+.agent-title { margin-top: 13px; font-weight: 700; }
+.agent-meta { margin-top: 6px; color: #7f92a8; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-card p { margin-top: 10px; color: #b7c3d0; font-size: 12px; line-height: 1.4; }
+.logs-panel { margin-top: 16px; }
+.logs { max-height: 230px; overflow: auto; background: #0c121a; border-radius: 10px; padding: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.log-line { padding: 4px 0; color: #a9b8c9; border-bottom: 1px solid rgba(255,255,255,.035); white-space: pre-wrap; word-break: break-word; }
+.ghost { background: transparent; }

@@ -1,0 +1,33 @@
+{
+  "name": "hakimi-agent-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Independent Electron bridge between the Hakimi P4 device, macOS input, and coding agents.",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "npm run build && electron .",
+    "typecheck": "tsc --noEmit",
+    "dist:mac": "npm run build && electron-builder --mac --arm64"
+  },
+  "dependencies": {
+    "@serialport/parser-readline": "^13.0.0",
+    "serialport": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^37.3.1",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.25.9",
+    "typescript": "^5.9.2"
+  },
+  "build": {
+    "appId": "com.cokeagent.hakimi-agent-bridge",
+    "productName": "Hakimi Agent Bridge",
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.developer-tools"
+    },
+    "files": ["dist/**/*", "package.json"]
+  }
+}
