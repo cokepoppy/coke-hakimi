@@ -238,8 +238,16 @@ static bool read_control_line(char *line, size_t line_size)
 static void control_task(void *arg)
 {
     (void)arg;
-    char line[CONTROL_LINE_BYTES];
-    while (read_control_line(line, sizeof(line))) {
+    // Keep the JSONL receive buffer off this task's stack.  The long input
+    // draft payload can be several kilobytes, while ESP-IDF's stack guard
+    // catches an 8 KB automatic buffer before the task can process it.
+    char *line = malloc(CONTROL_LINE_BYTES);
+    if (!line) {
+        ESP_LOGE(TAG, "control line buffer allocation failed");
+        vTaskDelete(NULL);
+        return;
+    }
+    while (read_control_line(line, CONTROL_LINE_BYTES)) {
         char topic[32];
         char status[32];
         copy_json_string(line, "topic", topic, sizeof(topic));
@@ -265,6 +273,7 @@ static void control_task(void *arg)
             hakimi_display_set_input_draft(draft, copy_json_int(line, "cursor", 0));
         }
     }
+    free(line);
     vTaskDelete(NULL);
 }
 
