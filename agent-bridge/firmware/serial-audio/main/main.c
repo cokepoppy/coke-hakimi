@@ -122,6 +122,16 @@ static void emit_input_levels(void)
     );
 }
 
+static void emit_control_ack(const char *topic, const char *detail)
+{
+    emit_line(
+        "{\"topic\":\"control/ack\",\"payload\":{\"ok\":true,\"for\":\"%s\",\"detail\":\"%s\",\"tsMs\":%lld}}\n",
+        topic,
+        detail,
+        (long long)(esp_timer_get_time() / 1000)
+    );
+}
+
 typedef struct {
     gpio_num_t gpio;
     const char *control;
@@ -265,13 +275,17 @@ static void control_task(void *arg)
             else if (strcmp(status, "waiting_user") == 0) hakimi_display_set_agent_state("WAITING");
             else hakimi_display_set_agent_state("IDLE");
             hakimi_display_set_agent_message(body);
+            emit_control_ack(topic, "agent message updated");
             continue;
         }
         if (strcmp(topic, "ui/input-draft") == 0) {
             char draft[512];
             copy_json_string(line, "text", draft, sizeof(draft));
             hakimi_display_set_input_draft(draft, copy_json_int(line, "cursor", 0));
+            emit_control_ack(topic, "input draft updated");
+            continue;
         }
+        emit_control_ack(topic[0] ? topic : "unknown", "ignored control topic");
     }
     free(line);
     vTaskDelete(NULL);

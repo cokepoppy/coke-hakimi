@@ -140,10 +140,12 @@ static void create_ui(void)
     lv_obj_set_pos(rail_panel, 0, 42); lv_obj_set_size(rail_panel, 138, 326); style_panel(rail_panel, rail, line, 0);
     lv_obj_t *pet = make_label(rail_panel, "<  o  o  >\n    --", graphite, 18, 110, 80);
     lv_obj_align(pet, LV_ALIGN_TOP_MID, 0, 28);
-    make_label(rail_panel, "AGENT STATUS", muted, 14, 115, 25);
+    lv_obj_t *rail_status_title = make_label(rail_panel, "AGENT STATUS", muted, 14, 110, 22);
+    lv_obj_set_pos(rail_status_title, 12, 122);
     lv_obj_t *rail_ready = make_label(rail_panel, "READY", graphite, 18, 115, 28);
-    lv_obj_align(rail_ready, LV_ALIGN_TOP_LEFT, 12, 175);
-    make_label(rail_panel, "----------------\n----  SIGNAL  ---\n----------------", muted, 14, 115, 70);
+    lv_obj_set_pos(rail_ready, 12, 150);
+    lv_obj_t *rail_signal = make_label(rail_panel, "-- SIGNAL --", muted, 14, 110, 22);
+    lv_obj_set_pos(rail_signal, 12, 198);
 
     lv_obj_t *chat = lv_obj_create(root);
     lv_obj_set_pos(chat, 138, 42); lv_obj_set_size(chat, UI_WIDTH - 138, 326); style_panel(chat, paper, line, 0);
