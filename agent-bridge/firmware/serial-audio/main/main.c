@@ -45,7 +45,7 @@
 #define BUTTON_SAMPLE_MS 5
 #define BUTTON_DEBOUNCE_MS 25
 #define BUTTON_LONG_PRESS_MS 700
-#define CONTROL_LINE_BYTES 1024
+#define CONTROL_LINE_BYTES 8192
 #define CONTROL_RX_BUFFER_BYTES 8192
 
 static const char *TAG = "hakimi-serial-audio";
@@ -137,9 +137,9 @@ static void button_task(void *arg)
 {
     (void)arg;
     button_state_t buttons[] = {
-        {SW1_GPIO, "SW1", "button.sw1", "agent_prompt", false, false, 0, 0},
+        {SW1_GPIO, "SW1", "button.sw1", "voice_ptt", false, false, 0, 0},
         {SW2_GPIO, "SW2", "button.sw2", "backspace", false, false, 0, 0},
-        {SW3_GPIO, "SW3", "button.sw3", "command_tab", false, false, 0, 0},
+        {SW3_GPIO, "SW3", "button.sw3", "agent_enter", false, false, 0, 0},
     };
     while (true) {
         for (size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i += 1) {
@@ -185,12 +185,36 @@ static void copy_json_string(const char *line, const char *key, char *output, si
     const char *start = strstr(line, needle);
     if (!start) return;
     start += strlen(needle);
-    const char *end = strchr(start, '"');
-    if (!end) return;
-    size_t length = (size_t)(end - start);
-    if (length >= output_size) length = output_size - 1;
-    memcpy(output, start, length);
-    output[length] = '\0';
+    size_t written = 0;
+    bool escaped = false;
+    for (const char *cursor = start; *cursor != '\0'; cursor += 1) {
+        if (escaped) {
+            char value = *cursor;
+            if (value == 'n') value = '\n';
+            else if (value == 'r') value = '\r';
+            else if (value == 't') value = '\t';
+            if (written + 1 < output_size) output[written++] = value;
+            escaped = false;
+            continue;
+        }
+        if (*cursor == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (*cursor == '"') break;
+        if (written + 1 < output_size) output[written++] = *cursor;
+    }
+    output[written] = '\0';
+}
+
+static int copy_json_int(const char *line, const char *key, int fallback)
+{
+    char needle[48];
+    snprintf(needle, sizeof(needle), "\"%s\":", key);
+    const char *start = strstr(line, needle);
+    if (!start) return fallback;
+    start += strlen(needle);
+    return (int)strtol(start, NULL, 10);
 }
 
 static bool read_control_line(char *line, size_t line_size)
@@ -223,12 +247,23 @@ static void control_task(void *arg)
             emit_input_levels();
             continue;
         }
-        if (strcmp(topic, "speech/text") != 0) continue;
-        copy_json_string(line, "status", status, sizeof(status));
-        if (strcmp(status, "working") == 0) hakimi_display_set_agent_state("WORKING");
-        else if (strcmp(status, "error") == 0) hakimi_display_set_agent_state("ERROR");
-        else if (strcmp(status, "done") == 0) hakimi_display_set_agent_state("DONE");
-        else hakimi_display_set_agent_state("IDLE");
+        if (strcmp(topic, "speech/text") == 0) {
+            char body[512];
+            copy_json_string(line, "body", body, sizeof(body));
+            copy_json_string(line, "status", status, sizeof(status));
+            if (strcmp(status, "working") == 0) hakimi_display_set_agent_state("WORKING");
+            else if (strcmp(status, "error") == 0) hakimi_display_set_agent_state("ERROR");
+            else if (strcmp(status, "done") == 0) hakimi_display_set_agent_state("DONE");
+            else if (strcmp(status, "waiting_user") == 0) hakimi_display_set_agent_state("WAITING");
+            else hakimi_display_set_agent_state("IDLE");
+            hakimi_display_set_agent_message(body);
+            continue;
+        }
+        if (strcmp(topic, "ui/input-draft") == 0) {
+            char draft[512];
+            copy_json_string(line, "text", draft, sizeof(draft));
+            hakimi_display_set_input_draft(draft, copy_json_int(line, "cursor", 0));
+        }
     }
     vTaskDelete(NULL);
 }

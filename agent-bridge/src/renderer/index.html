@@ -40,6 +40,11 @@
             <div id="audio-meter-meta" class="muted">收到 0 帧 · 转发 0 帧 · 丢弃 0 帧</div>
             <p class="meter-note">这里验证的是“麦克风声音已到达 Mac”。文字是否正确，要在豆包激活的输入框里直接看识别结果。</p>
           </div>
+          <div class="input-draft-panel">
+            <div class="meter-head"><strong class="status-chip pending">MAC 输入框草稿</strong><span id="input-draft-meta" class="muted">AX 监听器启动中</span></div>
+            <div id="input-draft-value" class="input-draft-value">尚未读取 Codex 输入框</div>
+            <p class="meter-note">豆包提交到 Codex 输入框的文字会在这里显示，并同步到 Hakimi 底部输入框；设备不做 ASR。</p>
+          </div>
           <div class="control-grid audio-test-grid">
             <button id="audio-test-start" class="primary">开始音频测试</button>
             <button id="audio-test-stop">停止音频测试</button>
@@ -64,7 +69,7 @@
       <section class="panel agents-panel">
         <div class="panel-head"><div><span class="eyebrow">AGENT OUTPUT ADAPTERS</span><h2>当前 Agent 状态</h2></div><span class="muted">只读观察 · 通用格式</span></div>
         <div id="agent-list" class="agent-list"></div>
-        <div class="callout mapping"><strong>默认硬件映射</strong><p>SW1 长按：语音按住说；摇杆左/右：输入框光标；摇杆中心：回车；SW2 短按：退格；SW3 短按：Command+Tab。后续会把这些映射做成设置项。</p></div>
+          <div class="callout mapping"><strong>默认硬件映射</strong><p>SW1 长按：语音按住说；摇杆左/右：输入框光标；摇杆中心或 SW3 短按：回车/发送；SW2 短按：退格。Command+Tab 保留为 Mac 控制测试和后续组合键，不占用实体按钮。</p></div>
       </section>
 
       <section class="panel logs-panel">

@@ -82,6 +82,94 @@ func findComposer(in root: AXUIElement) -> AXUIElement? {
     return best?.score ?? 0 > 0 ? best?.element : nil
 }
 
+func axText(_ element: AXUIElement, _ attribute: CFString) -> String? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else { return nil }
+    if let text = value as? String { return text }
+    if let attributed = value as? NSAttributedString { return attributed.string }
+    return nil
+}
+
+func axCursor(_ element: AXUIElement) -> Int? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &value) == .success,
+          let value else { return nil }
+    let axValue = value as! AXValue
+    var range = CFRange(location: 0, length: 0)
+    guard AXValueGetValue(axValue, .cfRange, &range) else { return nil }
+    return max(0, range.location + range.length)
+}
+
+func focusedWindow(for app: NSRunningApplication) -> AXUIElement? {
+    let axApp = AXUIElementCreateApplication(app.processIdentifier)
+    var focusedWindowValue: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(
+        axApp,
+        kAXFocusedWindowAttribute as CFString,
+        &focusedWindowValue
+    ) == .success, let focusedWindowValue else { return nil }
+    return focusedWindowValue as! AXUIElement
+}
+
+func focusedComposer(in window: AXUIElement) -> AXUIElement? {
+    var focusedValue: CFTypeRef?
+    let status = AXUIElementCopyAttributeValue(
+        window,
+        kAXFocusedUIElementAttribute as CFString,
+        &focusedValue
+    )
+    if status == .success, let focusedValue {
+        let focused = focusedValue as! AXUIElement
+        if textInputScore(focused) > 0 {
+            return focused
+        }
+    }
+    return findComposer(in: window)
+}
+
+func composerSnapshot(_ appName: String) -> [String: Any] {
+    guard AXIsProcessTrusted() else {
+        return ["ok": false, "supported": false, "focused": false, "text": "", "cursor": 0,
+                "detail": "尚未获得 macOS 辅助功能权限"]
+    }
+    guard let app = runningApplication(named: appName) else {
+        return ["ok": false, "supported": false, "focused": false, "text": "", "cursor": 0,
+                "detail": "未找到正在运行的应用：\(appName)"]
+    }
+    guard let window = focusedWindow(for: app) else {
+        return ["ok": false, "supported": false, "focused": false, "text": "", "cursor": 0,
+                "detail": "无法读取 \(appName) 的焦点窗口"]
+    }
+    guard let composer = focusedComposer(in: window) else {
+        return ["ok": false, "supported": false, "focused": false, "text": "", "cursor": 0,
+                "detail": "没有找到 \(appName) 的文本输入框"]
+    }
+    let rawText = axText(composer, kAXValueAttribute as CFString) ?? ""
+    let text = String(rawText.prefix(4000))
+    let cursor = min(axCursor(composer) ?? text.count, text.count)
+    return ["ok": true, "supported": true, "focused": true, "text": text, "cursor": cursor,
+            "detail": "已读取 \(appName) 输入框"]
+}
+
+func watchComposer(_ appName: String) -> Never {
+    var previousSignature = ""
+    while true {
+        let snapshot = composerSnapshot(appName)
+        let signature = [
+            String(describing: snapshot["supported"] ?? false),
+            String(describing: snapshot["focused"] ?? false),
+            String(describing: snapshot["text"] ?? ""),
+            String(describing: snapshot["cursor"] ?? 0),
+            String(describing: snapshot["detail"] ?? ""),
+        ].joined(separator: "|")
+        if signature != previousSignature {
+            emit(snapshot)
+            previousSignature = signature
+        }
+        usleep(150_000)
+    }
+}
+
 func clickWindowComposerFallback(_ window: AXUIElement) -> Bool {
     var positionValue: CFTypeRef?
     var sizeValue: CFTypeRef?
@@ -410,6 +498,9 @@ case "focus":
 case "dump":
     guard args.count >= 2 else { fail("dump 缺少应用名") }
     dumpAccessibility(args[1])
+case "watch-composer":
+    guard args.count >= 2 else { fail("watch-composer 缺少应用名") }
+    watchComposer(args[1])
 case "key":
     guard args.count >= 3 else { fail("key 需要按键名和 down/up/tap") }
     sendKey(args[1], args[2])

@@ -10,6 +10,8 @@ import {
   focusCodexWindow,
   listAudioInputs,
   postKey,
+  watchAgentComposer,
+  type ComposerSnapshot,
 } from './macos';
 import { AgentRegistry } from './agent-adapter';
 import { SerialAudioSink } from './audio';
@@ -22,6 +24,7 @@ import {
   type BridgeState,
   type DeviceMessage,
   type DevicePortInfo,
+  type InputDraft,
 } from './protocol';
 
 let windowRef: BrowserWindow | undefined;
@@ -125,6 +128,11 @@ let audioLastPacketAt: number | undefined;
 let audioLastRms = 0;
 let audioLastPeak = 0;
 let audioMeterBroadcastAt = 0;
+let inputDraft: InputDraft | undefined;
+let composerSnapshot: ComposerSnapshot | undefined;
+let composerSignature = '';
+let inputDraftRevision = 0;
+let stopComposerWatcher: (() => void) | undefined;
 const audioSink = new SerialAudioSink((line) => broadcast('serial-audio-line', line));
 
 function broadcast(channel: string, payload: unknown): void {
@@ -158,6 +166,7 @@ async function state(): Promise<BridgeState> {
     accessibilityTrusted: await accessibilityTrusted(),
     codexRunning: snapshots.some((item) => item.agentId === 'codex' && item.state !== 'idle'),
     snapshots,
+    inputDraft,
     lastDeviceEvent: lastMessage,
     lastError,
   };
@@ -167,6 +176,48 @@ async function publishState(): Promise<void> {
   const current = await state();
   broadcast('bridge-state', current);
   await syncAgentToDevice(current.snapshots);
+  sendInputDraftToDevice(inputDraft);
+}
+
+function sendInputDraftToDevice(draft: InputDraft | undefined): void {
+  if (!draft) return;
+  serial.trySend({
+    topic: 'ui/input-draft',
+    payload: {
+      text: draft.text,
+      cursor: draft.cursor,
+      revision: draft.revision,
+      status: draft.status,
+      source: draft.source,
+      updatedAt: draft.updatedAt,
+    },
+  });
+}
+
+function applyComposerSnapshot(next: ComposerSnapshot): void {
+  composerSnapshot = next;
+  const status: InputDraft['status'] = next.supported ? (voiceKeyDown ? 'composing' : 'ready') : 'unavailable';
+  const text = next.supported && typeof next.text === 'string' ? next.text : '';
+  const cursor = Math.max(0, Math.min(Number(next.cursor || 0), text.length));
+  const signature = [status, text, cursor, next.detail || ''].join('|');
+  if (signature === composerSignature) return;
+  if (text !== inputDraft?.text || cursor !== inputDraft?.cursor) inputDraftRevision += 1;
+  composerSignature = signature;
+  inputDraft = {
+    text,
+    cursor,
+    revision: inputDraftRevision,
+    source: next.supported ? 'mac-accessibility' : 'unknown',
+    status,
+    updatedAt: Date.now(),
+    detail: next.detail,
+  };
+  broadcast('input-draft', inputDraft);
+  sendInputDraftToDevice(inputDraft);
+}
+
+function refreshComposerStatus(): void {
+  if (composerSnapshot) applyComposerSnapshot(composerSnapshot);
 }
 
 function messageText(snapshot: BridgeState['snapshots'][number]): string {
@@ -207,6 +258,7 @@ async function beginVoiceInput(): Promise<void> {
   if (voiceKeyDown) return;
   const key = await postKey('fn', 'down');
   voiceKeyDown = key.ok;
+  refreshComposerStatus();
   broadcast('bridge-action', { type: 'voice', phase: 'start', detail: `${focus.detail}；${key.detail}` });
   await publishState();
 }
@@ -215,6 +267,7 @@ async function endVoiceInput(): Promise<void> {
   if (!voiceKeyDown) return;
   const key = await postKey('fn', 'up');
   voiceKeyDown = false;
+  refreshComposerStatus();
   broadcast('bridge-action', { type: 'voice', phase: 'end', detail: key.detail });
   await publishState();
 }
@@ -334,8 +387,8 @@ async function handleDeviceMessage(message: DeviceMessage): Promise<void> {
   else if (event === 'joystick.down') result = await postKey('down', 'tap');
   else if (event === 'joystick.center.short_press' || event === 'button.encoder.short_press') result = await postKey('enter', 'tap');
   else if (event === 'button.sw2.short_press') result = await postKey('backspace', 'tap');
-  else if (event === 'button.sw3.short_press') result = await commandTab();
-  else if (action === 'agent_enter' || action === 'agent_prompt') result = await postKey('enter', 'tap');
+  else if (event === 'button.sw3.short_press') result = await postKey('enter', 'tap');
+  else if (action === 'agent_enter') result = await postKey('enter', 'tap');
   if (result) broadcast('bridge-action', { type: 'input', event, detail: result.detail });
 }
 
@@ -399,6 +452,9 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   registerIpc();
+  stopComposerWatcher = watchAgentComposer('Codex', applyComposerSnapshot, (detail) => {
+    if (!lastError) lastError = detail;
+  });
   createWindow();
   void publishState();
   setInterval(() => void publishState(), 2500);
@@ -412,6 +468,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  stopComposerWatcher?.();
   void audioSink.stop();
 });
 

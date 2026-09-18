@@ -34,6 +34,8 @@ h2 { margin-top: 4px; font-size: 19px; }
 .callout { margin-top: 16px; border-left: 3px solid #63b3ed; background: #142333; padding: 12px 14px; color: #c6d7e8; }
 .callout p { margin-top: 5px; line-height: 1.5; font-size: 13px; }
 .audio-meter-panel { margin-top: 14px; padding: 12px 13px; background: #101722; border: 1px solid #26374a; border-radius: 10px; }
+.input-draft-panel { margin-top: 12px; padding: 12px 13px; background: #101722; border: 1px solid #26374a; border-radius: 10px; }
+.input-draft-value { min-height: 38px; margin-top: 9px; padding: 9px 10px; border-radius: 8px; background: #172230; color: #eaf5ff; font-size: 13px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
 .meter-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .meter-track { height: 10px; margin-top: 11px; overflow: hidden; border-radius: 999px; background: #202d3b; }
 .meter-fill { height: 100%; width: 2%; border-radius: inherit; background: #68809b; transition: width .12s ease, background .12s ease; }

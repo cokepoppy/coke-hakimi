@@ -1,4 +1,4 @@
-import type { AudioInputInfo, AudioMeter, BridgeState, ChipIdentity, DeviceMessage, DevicePortInfo } from './protocol';
+import type { AudioInputInfo, AudioMeter, BridgeState, ChipIdentity, DeviceMessage, DevicePortInfo, InputDraft } from './protocol';
 
 declare global {
   interface Window {
@@ -18,6 +18,7 @@ declare global {
       stopAudioTest(): Promise<{ ok: boolean; detail: string }>;
       openDocs(): Promise<void>;
       onState(callback: (state: BridgeState) => void): () => void;
+      onInputDraft(callback: (draft: InputDraft) => void): () => void;
       onAudioMeter(callback: (meter: AudioMeter) => void): () => void;
       onDeviceMessage(callback: (message: DeviceMessage) => void): () => void;
       onSerialLine(callback: (line: string) => void): () => void;
@@ -42,6 +43,8 @@ const audioMeterFill = $('#audio-meter-fill') as HTMLDivElement;
 const audioMeterMeta = $('#audio-meter-meta');
 const a11yStatus = $('#a11y-status');
 const result = $('#result');
+const inputDraftValue = $('#input-draft-value');
+const inputDraftMeta = $('#input-draft-meta');
 
 function log(line: string): void {
   const item = document.createElement('div');
@@ -85,6 +88,7 @@ function render(state: BridgeState): void {
   }
   a11yStatus.textContent = state.accessibilityTrusted ? '辅助功能：已授权' : '辅助功能：未授权';
   a11yStatus.className = `status-chip ${state.accessibilityTrusted ? 'online' : 'pending'}`;
+  renderInputDraft(state.inputDraft);
   agentList.replaceChildren();
   for (const snapshot of state.snapshots) {
     const card = document.createElement('article');
@@ -97,6 +101,18 @@ function render(state: BridgeState): void {
     `;
     agentList.append(card);
   }
+}
+
+function renderInputDraft(draft: InputDraft | undefined): void {
+  if (!draft) {
+    inputDraftValue.textContent = '尚未读取 Codex 输入框';
+    inputDraftMeta.textContent = 'AX 监听器启动中';
+    return;
+  }
+  inputDraftValue.textContent = draft.text || '（输入框为空）';
+  inputDraftMeta.textContent = draft.status === 'unavailable'
+    ? `${draft.detail || '无法读取'} · 需要辅助功能权限`
+    : `状态 ${draft.status} · 光标 ${draft.cursor} · revision ${draft.revision}`;
 }
 
 function renderAudioMeter(meter: AudioMeter): void {
@@ -199,6 +215,7 @@ $('#test-cmdtab').addEventListener('click', async () => {
 $('#docs').addEventListener('click', () => void window.hakimiBridge.openDocs());
 
 window.hakimiBridge.onState(render);
+window.hakimiBridge.onInputDraft(renderInputDraft);
 window.hakimiBridge.onAudioMeter(renderAudioMeter);
 window.hakimiBridge.onDeviceMessage((message) => log(`设备事件：${JSON.stringify(message)}`));
 window.hakimiBridge.onSerialLine((line) => log(`串口：${line}`));

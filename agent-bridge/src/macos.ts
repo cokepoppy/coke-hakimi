@@ -1,6 +1,7 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -30,6 +31,15 @@ type HelperResponse = {
   detail?: string;
 };
 
+export type ComposerSnapshot = {
+  ok?: boolean;
+  supported?: boolean;
+  focused?: boolean;
+  text?: string;
+  cursor?: number;
+  detail?: string;
+};
+
 async function runNativeHelper(args: string[]): Promise<HelperResponse | undefined> {
   if (process.platform !== 'darwin' || !existsSync(NATIVE_HELPER)) return undefined;
   try {
@@ -38,6 +48,35 @@ async function runNativeHelper(args: string[]): Promise<HelperResponse | undefin
   } catch {
     return undefined;
   }
+}
+
+export function watchAgentComposer(
+  appName: string,
+  onSnapshot: (snapshot: ComposerSnapshot) => void,
+  onError: (detail: string) => void = () => undefined,
+): () => void {
+  if (process.platform !== 'darwin' || !existsSync(NATIVE_HELPER)) return () => undefined;
+  const child = spawn(NATIVE_HELPER, ['watch-composer', appName], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const lines = createInterface({ input: child.stdout });
+  lines.on('line', (line) => {
+    try {
+      const value = JSON.parse(line) as ComposerSnapshot;
+      if (value && typeof value === 'object') onSnapshot(value);
+    } catch {
+      onError(`macOS 辅助功能返回了无法解析的数据：${line.slice(0, 160)}`);
+    }
+  });
+  child.stderr.on('data', (chunk: Buffer) => {
+    const detail = chunk.toString().trim();
+    if (detail) onError(detail);
+  });
+  child.on('error', (error) => onError(`输入框监听器启动失败：${error.message}`));
+  return () => {
+    lines.close();
+    if (!child.killed) child.kill('SIGTERM');
+  };
 }
 
 export async function accessibilityTrusted(): Promise<boolean> {

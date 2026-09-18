@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hakimi Screen UI Prototype</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="prototype-shell">
+      <div class="prototype-toolbar">
+        <div>
+          <span class="toolbar-kicker">HAKIMI SCREEN / 640×480</span>
+          <strong>浅色工业风 UI 交互原型</strong>
+        </div>
+        <div class="toolbar-actions">
+          <button data-state="idle">IDLE</button>
+          <button data-state="listening">LISTENING</button>
+          <button data-state="working">WORKING</button>
+          <button data-state="waiting_user">WAITING</button>
+          <button data-state="done">DONE</button>
+          <button data-state="error">ERROR</button>
+        </div>
+      </div>
+
+      <section class="device-frame" aria-label="Hakimi 640 by 480 screen">
+        <header class="screen-header">
+          <div class="brand-mark"><span class="brand-dot"></span><span>HAKIMI</span></div>
+          <div class="header-context">
+            <strong id="agent-name">CODEX</strong>
+            <span>/</span>
+            <span id="project-name">coke-hakimi</span>
+          </div>
+          <div class="header-state"><i id="state-dot"></i><span id="state-label">IDLE</span><span class="signal">▮▮▮</span></div>
+        </header>
+
+        <div class="screen-main">
+          <aside class="agent-rail">
+            <div class="pet-card">
+              <div class="pet-face"><span></span><span></span><b></b></div>
+              <div class="pet-shadow"></div>
+            </div>
+            <div class="rail-label">AGENT STATUS</div>
+            <strong id="rail-state">IDLE</strong>
+            <div class="rail-meter"><span id="rail-meter-fill"></span></div>
+            <div class="rail-lines"><span></span><span></span><span></span></div>
+            <div class="rail-foot"><span class="rail-check">✓</span><span id="rail-detail">READY FOR INPUT</span></div>
+          </aside>
+
+          <section class="conversation" aria-live="polite">
+            <div class="conversation-head"><span>SESSION / LIVE TRANSCRIPT</span><span id="message-count">03 MSG</span></div>
+            <div id="messages" class="messages">
+              <article class="bubble bubble-agent">
+                <div class="bubble-meta"><span class="avatar avatar-agent">A</span><span>AGENT · 14:02</span></div>
+                <p>Ready. Tell me what to build next.</p>
+              </article>
+              <article class="bubble bubble-user">
+                <div class="bubble-meta"><span>YOU · 14:03</span><span class="avatar avatar-user">U</span></div>
+                <p>Make the device UI feel calm and industrial.</p>
+              </article>
+              <article class="bubble bubble-agent bubble-active">
+                <div class="bubble-meta"><span class="avatar avatar-agent">A</span><span id="active-meta">AGENT · WORKING</span></div>
+                <p id="active-message">I am preparing the next interface pass<span class="typing-dots">···</span></p>
+              </article>
+            </div>
+          </section>
+        </div>
+
+        <section class="composer" aria-label="Voice input draft">
+          <div class="composer-icon" id="mic-icon">●</div>
+          <div class="composer-body">
+            <div class="composer-meta"><span id="composer-label">MAC / DOUBAO INPUT DRAFT</span><span id="composer-status">READY</span></div>
+            <div class="composer-input-row">
+              <input id="draft-input" value="Try saying something to your agent" aria-label="Voice input draft" />
+              <span class="caret" aria-hidden="true"></span>
+            </div>
+          </div>
+          <button id="send-button" class="send-button" title="Submit draft">↗</button>
+        </section>
+
+        <footer class="screen-actions">
+          <button id="listen-button"><span class="key-symbol">◉</span><span><b>SW1</b><small>HOLD TO LISTEN</small></span></button>
+          <button id="backspace-button"><span class="key-symbol">⌫</span><span><b>SW2</b><small>BACKSPACE</small></span></button>
+          <button id="enter-button"><span class="key-symbol">↵</span><span><b>SW3</b><small>ENTER / SEND</small></span></button>
+        </footer>
+      </section>
+
+      <p class="prototype-note">原型提示：可以直接在底部输入框打字模拟 Mac/豆包同步；点击 SW1、SW2、SW3 或上方状态按钮观察交互。</p>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>

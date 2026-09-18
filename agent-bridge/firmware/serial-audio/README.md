@@ -47,9 +47,12 @@ SW1 GPIO50 · SW2 GPIO49 · SW3 GPIO5 (active low with pull-ups)
 The rendered logical canvas is 640x480 and is rotated into the panel, so the
 screen is intended to be mounted horizontally. `SW1` long press emits
 `button.sw1.hold` with `voice_ptt` start/end gestures; SW1 short press emits
-`agent_prompt`; SW2 emits `backspace`; SW3 emits `command_tab`.
+the same `voice_ptt` action without a hold gesture and is ignored by the
+bridge; SW2 emits `backspace`; SW3 emits `agent_enter`.
 
-The firmware keeps PSRAM enabled for the LCD framebuffers. For the CH343
+The firmware keeps PSRAM enabled for the LCD framebuffers. The default physical
+button mapping is SW1 voice push-to-talk, SW2 Backspace, and SW3 Enter/send;
+Command+Tab remains a bridge-side combination action. For the CH343
 upload path, use the no-stub command below if PlatformIO's 921600 baud upload
 reports `Invalid head of packet`:
 

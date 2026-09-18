@@ -52,11 +52,24 @@ export type ChipIdentity = {
 
 export type AgentState =
   | 'idle'
+  | 'listening'
   | 'working'
   | 'waiting_user'
   | 'done'
   | 'error'
   | 'disconnected';
+
+export type InputDraftStatus = 'ready' | 'composing' | 'unavailable';
+
+export type InputDraft = {
+  text: string;
+  cursor: number;
+  revision: number;
+  source: 'mac-accessibility' | 'unknown';
+  status: InputDraftStatus;
+  updatedAt: number;
+  detail?: string;
+};
 
 export type AgentSnapshot = {
   agentId: string;
@@ -89,6 +102,7 @@ export type BridgeState = {
   accessibilityTrusted: boolean;
   codexRunning: boolean;
   snapshots: AgentSnapshot[];
+  inputDraft?: InputDraft;
   lastDeviceEvent?: DeviceMessage;
   lastError?: string;
 };

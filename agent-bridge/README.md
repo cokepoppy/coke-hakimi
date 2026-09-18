@@ -10,10 +10,10 @@ Independent macOS Electron + TypeScript bridge for the custom ESP32-P4 Hakimi fi
 - Reports whether macOS Accessibility is enabled.
 - Has a vendor-neutral `AgentSnapshot` boundary with initial best-effort Codex and Claude Code adapters.
 - Detects the connected P4 chip revision through `esptool` and records the V1/V3 family before any future firmware update.
-- Maps `input/event` packets to voice PTT, cursor arrows, Backspace, Enter, and Command+Tab.
-- Drives the physical horizontal LCD with a small pixel-pet status screen and
-  maps the three HachimoDock buttons to voice PTT, Enter, Backspace, and
-  Command+Tab.
+- Maps `input/event` packets to voice PTT, cursor arrows, Backspace, and Enter; Command+Tab remains a separate bridge action.
+- Drives the physical horizontal LCD with a light industrial LVGL status and
+  chat screen; the three HachimoDock buttons are voice PTT, Backspace, and
+  Enter/send. Command+Tab remains a bridge-side combination action.
 - Ships an earlier V3-only native USB UAC proof under `firmware/uac/` for fallback/reference.
 - Ships the active V3-only serial microphone proof under `firmware/serial-audio/`.
 
@@ -27,9 +27,12 @@ The current physical controls are:
 
 - `SW1` long press: focus Codex and hold macOS `Fn` for Doubao voice input;
   release it to finish the utterance.
-- `SW1` short press: press Enter in the focused agent input.
+- `SW1` short press: no submit action; use the long press for voice PTT.
 - `SW2` short press: Backspace.
-- `SW3` short press: Command+Tab.
+- `SW3` short press: Enter/send the focused agent prompt.
+
+Command+Tab remains available as a Mac bridge test and future combination-key
+action; it is not assigned to a dedicated physical button.
 
 The LCD is rendered as a 640x480 horizontal UI on the 480x640 ST7701S panel.
 It shows `VOICE` while SW1 is held and mirrors the generic agent state
