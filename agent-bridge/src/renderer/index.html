@@ -34,10 +34,17 @@
           <div class="audio-head"><span class="muted">macOS 音频输入清单（只读）</span><button id="refresh-audio">刷新音频</button></div>
           <div id="audio-inputs" class="audio-inputs">正在检测…</div>
           <div class="callout"><strong>音频设计</strong><p>ESP32 麦克风 → 顶部 Type-C 的 CH343 串口 → Electron → BlackHole 2ch → 豆包输入法。Electron 不做 ASR；点击下面的测试按钮后，才会把串口 PCM 转发给虚拟麦克风。</p></div>
+          <div class="audio-meter-panel">
+            <div class="meter-head"><strong id="audio-receive-status" class="status-chip pending">尚未收到麦克风数据</strong><span id="audio-meter-values" class="muted">RMS -- · Peak --</span></div>
+            <div class="meter-track"><div id="audio-meter-fill" class="meter-fill"></div></div>
+            <div id="audio-meter-meta" class="muted">收到 0 帧 · 转发 0 帧 · 丢弃 0 帧</div>
+            <p class="meter-note">这里验证的是“麦克风声音已到达 Mac”。文字是否正确，要在豆包激活的输入框里直接看识别结果。</p>
+          </div>
           <div class="control-grid audio-test-grid">
             <button id="audio-test-start" class="primary">开始音频测试</button>
             <button id="audio-test-stop">停止音频测试</button>
           </div>
+          <div class="callout test-steps"><strong>豆包文字验收</strong><p>1. 点击“唤起并聚焦 Codex”；2. 点击“开始音频测试”；3. 按住哈基米的语音键说“测试一二三”，松开；4. 看上面的电平条持续变化，并看 Codex 输入框是否出现“测试一二三”。电平有变化但没有文字，说明硬件链路正常，问题在豆包是否被 Fn 激活或输入焦点。</p></div>
         </div>
 
         <div class="panel control-panel">

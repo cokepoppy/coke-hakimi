@@ -33,6 +33,14 @@ h2 { margin-top: 4px; font-size: 19px; }
 .muted { color: #8595a9; font-size: 12px; }
 .callout { margin-top: 16px; border-left: 3px solid #63b3ed; background: #142333; padding: 12px 14px; color: #c6d7e8; }
 .callout p { margin-top: 5px; line-height: 1.5; font-size: 13px; }
+.audio-meter-panel { margin-top: 14px; padding: 12px 13px; background: #101722; border: 1px solid #26374a; border-radius: 10px; }
+.meter-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.meter-track { height: 10px; margin-top: 11px; overflow: hidden; border-radius: 999px; background: #202d3b; }
+.meter-fill { height: 100%; width: 2%; border-radius: inherit; background: #68809b; transition: width .12s ease, background .12s ease; }
+.meter-fill.active { background: linear-gradient(90deg, #4f8cff, #62e6b0); }
+.audio-meter-panel > .muted { display: block; margin-top: 8px; }
+.meter-note { margin-top: 8px; color: #8fa5bb; font-size: 12px; line-height: 1.45; }
+.test-steps { margin-top: 12px; }
 .mapping { margin-top: 14px; }
 .control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
 .result { margin-top: 13px; min-height: 42px; padding: 11px 12px; background: #101722; border-radius: 9px; color: #a9bbcf; font-size: 13px; }

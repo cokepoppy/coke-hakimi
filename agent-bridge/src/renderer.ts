@@ -1,4 +1,4 @@
-import type { AudioInputInfo, BridgeState, ChipIdentity, DeviceMessage, DevicePortInfo } from './protocol';
+import type { AudioInputInfo, AudioMeter, BridgeState, ChipIdentity, DeviceMessage, DevicePortInfo } from './protocol';
 
 declare global {
   interface Window {
@@ -18,6 +18,7 @@ declare global {
       stopAudioTest(): Promise<{ ok: boolean; detail: string }>;
       openDocs(): Promise<void>;
       onState(callback: (state: BridgeState) => void): () => void;
+      onAudioMeter(callback: (meter: AudioMeter) => void): () => void;
       onDeviceMessage(callback: (message: DeviceMessage) => void): () => void;
       onSerialLine(callback: (line: string) => void): () => void;
       onSerialAudioLine(callback: (line: string) => void): () => void;
@@ -35,6 +36,10 @@ const chipStatus = $('#chip-status');
 const agentList = $('#agent-list');
 const audioStatus = $('#audio-status');
 const audioInputs = $('#audio-inputs');
+const audioReceiveStatus = $('#audio-receive-status');
+const audioMeterValues = $('#audio-meter-values');
+const audioMeterFill = $('#audio-meter-fill') as HTMLDivElement;
+const audioMeterMeta = $('#audio-meter-meta');
 const a11yStatus = $('#a11y-status');
 const result = $('#result');
 
@@ -58,6 +63,15 @@ function render(state: BridgeState): void {
   const blackHole = state.audioInputs.find((item) => /blackhole/i.test(item.name));
   audioStatus.textContent = state.audioForwarding ? `正在转发到 ${blackHole?.name || 'BlackHole 2ch'}` : state.audioDeviceHint;
   audioStatus.className = `status-chip ${blackHole ? 'online' : 'pending'}`;
+  renderAudioMeter({
+    received: state.audioFramesReceived > 0,
+    rms: state.audioLastRms,
+    peak: state.audioLastPeak,
+    framesReceived: state.audioFramesReceived,
+    framesForwarded: state.audioFramesForwarded,
+    framesDropped: state.audioFramesDropped,
+    packetAt: state.audioLastPacketAt,
+  });
   audioInputs.replaceChildren();
   if (!state.audioInputs.length) {
     audioInputs.textContent = '暂未发现音频输入设备';
@@ -83,6 +97,18 @@ function render(state: BridgeState): void {
     `;
     agentList.append(card);
   }
+}
+
+function renderAudioMeter(meter: AudioMeter): void {
+  const fresh = Boolean(meter.packetAt && Date.now() - meter.packetAt < 1000);
+  audioReceiveStatus.textContent = fresh
+    ? '正在收到麦克风 PCM'
+    : meter.received ? '曾收到 PCM，当前没有新数据' : '尚未收到麦克风数据';
+  audioReceiveStatus.className = `status-chip ${fresh ? 'online' : 'pending'}`;
+  audioMeterValues.textContent = `RMS ${meter.rms.toFixed(1)} · Peak ${meter.peak}`;
+  audioMeterFill.style.width = `${Math.min(100, Math.max(2, meter.rms / 20))}%`;
+  audioMeterFill.className = fresh && meter.rms > 20 ? 'meter-fill active' : 'meter-fill';
+  audioMeterMeta.textContent = `收到 ${meter.framesReceived} 帧 · 转发 ${meter.framesForwarded} 帧 · 丢弃 ${meter.framesDropped} 帧`;
 }
 
 function escapeHtml(value: string): string {
@@ -173,6 +199,7 @@ $('#test-cmdtab').addEventListener('click', async () => {
 $('#docs').addEventListener('click', () => void window.hakimiBridge.openDocs());
 
 window.hakimiBridge.onState(render);
+window.hakimiBridge.onAudioMeter(renderAudioMeter);
 window.hakimiBridge.onDeviceMessage((message) => log(`设备事件：${JSON.stringify(message)}`));
 window.hakimiBridge.onSerialLine((line) => log(`串口：${line}`));
 window.hakimiBridge.onSerialAudioLine((line) => log(`音频辅助器：${line}`));

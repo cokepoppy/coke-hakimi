@@ -31,6 +31,16 @@ export type AudioPcmPayload = {
   dataBase64: string;
 };
 
+export type AudioMeter = {
+  received: boolean;
+  rms: number;
+  peak: number;
+  framesReceived: number;
+  framesForwarded: number;
+  framesDropped: number;
+  packetAt?: number;
+};
+
 export type ChipIdentity = {
   chip: 'ESP32-P4' | 'unknown';
   revisionText: string;
@@ -74,6 +84,8 @@ export type BridgeState = {
   audioFramesForwarded: number;
   audioFramesDropped: number;
   audioLastPacketAt?: number;
+  audioLastRms: number;
+  audioLastPeak: number;
   accessibilityTrusted: boolean;
   codexRunning: boolean;
   snapshots: AgentSnapshot[];

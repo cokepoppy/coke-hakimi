@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AudioInputInfo, BridgeState, ChipIdentity, DeviceMessage, DevicePortInfo } from './protocol';
+import type { AudioInputInfo, AudioMeter, BridgeState, ChipIdentity, DeviceMessage, DevicePortInfo } from './protocol';
 
 contextBridge.exposeInMainWorld('hakimiBridge', {
   listPorts: (): Promise<DevicePortInfo[]> => ipcRenderer.invoke('ports:list'),
@@ -20,6 +20,11 @@ contextBridge.exposeInMainWorld('hakimiBridge', {
     const listener = (_event: Electron.IpcRendererEvent, state: BridgeState) => callback(state);
     ipcRenderer.on('bridge-state', listener);
     return () => ipcRenderer.removeListener('bridge-state', listener);
+  },
+  onAudioMeter: (callback: (meter: AudioMeter) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, meter: AudioMeter) => callback(meter);
+    ipcRenderer.on('audio-meter', listener);
+    return () => ipcRenderer.removeListener('audio-meter', listener);
   },
   onDeviceMessage: (callback: (message: DeviceMessage) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, message: DeviceMessage) => callback(message);

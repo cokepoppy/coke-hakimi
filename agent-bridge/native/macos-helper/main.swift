@@ -13,9 +13,11 @@ import AudioToolbox
 func emit(_ values: [String: Any]) {
     let data = try? JSONSerialization.data(withJSONObject: values, options: [])
     if let data, let text = String(data: data, encoding: .utf8) {
-        print(text)
+        // stdout is a pipe when launched by Electron and Swift's print can be
+        // block-buffered there. The bridge needs the ready/error line now.
+        FileHandle.standardOutput.write(Data((text + "\n").utf8))
     } else {
-        print("{\"ok\":false,\"detail\":\"无法序列化辅助器结果\"}")
+        FileHandle.standardOutput.write(Data("{\"ok\":false,\"detail\":\"无法序列化辅助器结果\"}\n".utf8))
     }
 }
 
@@ -339,7 +341,7 @@ func startAudioSink(_ deviceName: String) -> Never {
         sampleRate: 48_000,
         channels: 1,
         interleaved: false
-    ) else { fail("无法创建 16 kHz 音频格式") }
+    ) else { fail("无法创建 48 kHz 音频格式") }
 
     let ring = FloatRingBuffer(capacity: 16_000 * 2)
     let engine = AVAudioEngine()

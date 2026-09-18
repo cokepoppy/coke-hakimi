@@ -17,6 +17,7 @@ import { identifyP4Chip } from './firmware';
 import {
   encodeMessage,
   parseMessage,
+  type AudioMeter,
   type AudioPcmPayload,
   type BridgeState,
   type DeviceMessage,
@@ -121,6 +122,9 @@ let audioFramesReceived = 0;
 let audioFramesForwarded = 0;
 let audioFramesDropped = 0;
 let audioLastPacketAt: number | undefined;
+let audioLastRms = 0;
+let audioLastPeak = 0;
+let audioMeterBroadcastAt = 0;
 const audioSink = new SerialAudioSink((line) => broadcast('serial-audio-line', line));
 
 function broadcast(channel: string, payload: unknown): void {
@@ -149,6 +153,8 @@ async function state(): Promise<BridgeState> {
     audioFramesForwarded,
     audioFramesDropped,
     audioLastPacketAt,
+    audioLastRms,
+    audioLastPeak,
     accessibilityTrusted: await accessibilityTrusted(),
     codexRunning: snapshots.some((item) => item.agentId === 'codex' && item.state !== 'idle'),
     snapshots,
@@ -217,6 +223,22 @@ function shouldForwardAudio(): boolean {
   return voiceKeyDown || audioMonitor;
 }
 
+function publishAudioMeter(): void {
+  const now = Date.now();
+  if (now - audioMeterBroadcastAt < 150) return;
+  audioMeterBroadcastAt = now;
+  const meter: AudioMeter = {
+    received: audioFramesReceived > 0,
+    rms: audioLastRms,
+    peak: audioLastPeak,
+    framesReceived: audioFramesReceived,
+    framesForwarded: audioFramesForwarded,
+    framesDropped: audioFramesDropped,
+    packetAt: audioLastPacketAt,
+  };
+  broadcast('audio-meter', meter);
+}
+
 async function startAudioMonitor(): Promise<{ ok: boolean; detail: string }> {
   audioMonitor = true;
   try {
@@ -252,22 +274,36 @@ function handleAudioPcm(message: DeviceMessage): void {
   }
   audioFramesReceived += 1;
   audioLastPacketAt = Date.now();
-  if (!shouldForwardAudio()) return;
   let pcm: Buffer;
   try {
     pcm = Buffer.from(payload.dataBase64, 'base64');
   } catch {
     audioFramesDropped += 1;
+    publishAudioMeter();
     return;
   }
+  let sumSquares = 0;
+  let peak = 0;
+  const sampleCount = Math.floor(pcm.length / 2);
+  for (let offset = 0; offset < sampleCount; offset += 1) {
+    const sample = Math.abs(pcm.readInt16LE(offset * 2));
+    sumSquares += sample * sample;
+    if (sample > peak) peak = sample;
+  }
+  audioLastRms = sampleCount ? Math.sqrt(sumSquares / sampleCount) : 0;
+  audioLastPeak = peak;
+  publishAudioMeter();
+  if (!shouldForwardAudio()) return;
   void audioSink.start().then(() => {
     if (!shouldForwardAudio()) return;
     if (audioSink.write(pcm)) audioFramesForwarded += 1;
     else audioFramesDropped += 1;
+    publishAudioMeter();
   }).catch((error) => {
     audioFramesDropped += 1;
     lastError = error instanceof Error ? error.message : String(error);
     broadcast('bridge-error', lastError);
+    publishAudioMeter();
   });
 }
 
