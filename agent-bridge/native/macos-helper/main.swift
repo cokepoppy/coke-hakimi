@@ -330,9 +330,13 @@ func startAudioSink(_ deviceName: String) -> Never {
     guard let device = audioDeviceID(named: deviceName) else {
         fail("找不到 macOS 音频设备：\(deviceName)。请先安装 BlackHole 2ch，或设置 HAKIMI_VIRTUAL_MIC")
     }
+    // BlackHole normally exposes a 48 kHz CoreAudio device while the ESP32
+    // serial stream is 16 kHz.  Feed the source node at the hardware rate and
+    // expand each serial sample three times so the virtual input receives
+    // actual PCM instead of an empty/mismatched render stream.
     guard let format = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
-        sampleRate: 16_000,
+        sampleRate: 48_000,
         channels: 1,
         interleaved: false
     ) else { fail("无法创建 16 kHz 音频格式") }
@@ -380,7 +384,10 @@ func startAudioSink(_ deviceName: String) -> Never {
             for offset in stride(from: 0, to: usable, by: 2) {
                 let bits = UInt16(bytes[offset]) | (UInt16(bytes[offset + 1]) << 8)
                 let sample = Int16(bitPattern: bits)
-                ring.push(Float(sample) / 32_768.0)
+                let value = Float(sample) / 32_768.0
+                ring.push(value)
+                ring.push(value)
+                ring.push(value)
             }
         }
         pending.removeFirst(usable)
