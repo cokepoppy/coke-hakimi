@@ -220,6 +220,10 @@ static void display_task(void *arg)
 {
     (void)arg;
     while (true) {
+        // The ESP-IDF port does not provide an automatic LVGL tick for this
+        // minimal hardware loop. Without advancing it, the initial frame can
+        // render while later label invalidations remain visually stale.
+        lv_tick_inc(33);
         lv_timer_handler();
         update_ui();
         vTaskDelay(pdMS_TO_TICKS(33));

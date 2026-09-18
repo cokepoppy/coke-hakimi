@@ -180,7 +180,10 @@ async function publishState(): Promise<void> {
 }
 
 function sendInputDraftToDevice(draft: InputDraft | undefined): void {
-  if (!draft) return;
+  // An unavailable Accessibility snapshot is not an empty composer. Do not
+  // let the periodic state publication erase a valid draft/test message that
+  // was already shown on the device. A supported empty draft still clears it.
+  if (!draft || draft.status === 'unavailable') return;
   serial.trySend({
     topic: 'ui/input-draft',
     payload: {
