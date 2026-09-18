@@ -22,6 +22,8 @@ Independent macOS Electron + TypeScript bridge for the custom ESP32-P4 Hakimi fi
 - Uses a GB2312-backed Source Han Sans SC 14 CJK font so ordinary Chinese
   Codex/Doubao messages render without square placeholders. The font is
   compiled from `firmware/serial-audio/main/hakimi_font_cjk_14.c`.
+- Uses the 2 MB single-app partition in `firmware/serial-audio/partitions.csv`
+  so the complete font image remains bootable.
 - Ships an earlier V3-only native USB UAC proof under `firmware/uac/` for fallback/reference.
 - Ships the active V3-only serial microphone proof under `firmware/serial-audio/`.
 

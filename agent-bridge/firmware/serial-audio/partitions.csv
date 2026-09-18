@@ -1,0 +1,7 @@
+# Name,   Type, SubType, Offset,  Size, Flags
+# The complete CJK font makes the application larger than the default 1 MB
+# single-app partition. The ESP32-P4 has 32 MB flash, so 2 MB leaves room for
+# future UI text and small firmware additions.
+nvs,      data, nvs,     ,        0x6000,
+phy_init, data, phy,     ,        0x1000,
+factory,  app,  factory, ,        2M,

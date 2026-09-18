@@ -11,6 +11,10 @@ CONFIG_CACHE_L2_CACHE_128KB=y
 CONFIG_CACHE_L2_CACHE_LINE_128B=y
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_FREERTOS_HZ=1000
+# The complete CJK font makes the application larger than the default 1 MB
+# factory partition. Use the checked-in 2 MB single-app layout.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # The complete Hakimi GB2312 font is compiled from main/hakimi_font_cjk_14.c.
 # Keep LVGL's smaller curated Source Han subset disabled to avoid duplicating
 # about 1 MB of glyph data in the firmware image.
