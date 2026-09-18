@@ -302,6 +302,30 @@ func setCurrentOutputDevice(_ device: AudioDeviceID, on outputNode: AVAudioOutpu
     )
 }
 
+func setDefaultInputDevice(named query: String) {
+    guard let device = audioDeviceID(named: query) else {
+        fail("找不到 macOS 输入设备：\(query)")
+    }
+    var address = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultInputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var selected = device
+    let status = AudioObjectSetPropertyData(
+        AudioObjectID(kAudioObjectSystemObject),
+        &address,
+        0,
+        nil,
+        UInt32(MemoryLayout<AudioDeviceID>.stride),
+        &selected
+    )
+    guard status == noErr else {
+        fail("无法设置默认输入设备为 \(query)，OSStatus=\(status)")
+    }
+    emit(["ok": true, "device": query, "detail": "系统默认输入已切换到 \(query)"])
+}
+
 func startAudioSink(_ deviceName: String) -> Never {
     guard let device = audioDeviceID(named: deviceName) else {
         fail("找不到 macOS 音频设备：\(deviceName)。请先安装 BlackHole 2ch，或设置 HAKIMI_VIRTUAL_MIC")
@@ -384,6 +408,8 @@ case "command-tab":
     sendCommandTab()
 case "audio-sink":
     startAudioSink(args.count >= 2 ? args[1] : "BlackHole 2ch")
+case "set-default-input":
+    setDefaultInputDevice(named: args.count >= 2 ? args[1] : "BlackHole 2ch")
 default:
     fail("未知命令：\(command)")
 }
