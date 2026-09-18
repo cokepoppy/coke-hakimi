@@ -45,6 +45,8 @@
 #define BUTTON_SAMPLE_MS 5
 #define BUTTON_DEBOUNCE_MS 25
 #define BUTTON_LONG_PRESS_MS 700
+#define CONTROL_LINE_BYTES 1024
+#define CONTROL_RX_BUFFER_BYTES 8192
 
 static const char *TAG = "hakimi-serial-audio";
 static SemaphoreHandle_t uart_output_mutex;
@@ -105,6 +107,17 @@ static void emit_input_event(const char *control, const char *event, const char 
         event,
         gesture,
         action,
+        (long long)(esp_timer_get_time() / 1000)
+    );
+}
+
+static void emit_input_levels(void)
+{
+    emit_line(
+        "{\"topic\":\"input/levels\",\"payload\":{\"sw1\":%d,\"sw2\":%d,\"sw3\":%d,\"activeLow\":true,\"tsMs\":%lld}}\n",
+        gpio_get_level(SW1_GPIO),
+        gpio_get_level(SW2_GPIO),
+        gpio_get_level(SW3_GPIO),
         (long long)(esp_timer_get_time() / 1000)
     );
 }
@@ -180,14 +193,36 @@ static void copy_json_string(const char *line, const char *key, char *output, si
     output[length] = '\0';
 }
 
+static bool read_control_line(char *line, size_t line_size)
+{
+    static size_t length;
+    uint8_t byte;
+    while (true) {
+        const int received = uart_read_bytes(UART_NUM_0, &byte, 1, pdMS_TO_TICKS(100));
+        if (received <= 0) continue;
+        if (byte == '\n' || byte == '\r') {
+            if (length == 0) continue;
+            line[length] = '\0';
+            length = 0;
+            return true;
+        }
+        if (length + 1 < line_size) line[length++] = (char)byte;
+        else length = 0;
+    }
+}
+
 static void control_task(void *arg)
 {
     (void)arg;
-    char line[1024];
-    while (fgets(line, sizeof(line), stdin)) {
+    char line[CONTROL_LINE_BYTES];
+    while (read_control_line(line, sizeof(line))) {
         char topic[32];
         char status[32];
         copy_json_string(line, "topic", topic, sizeof(topic));
+        if (strcmp(topic, "input/debug") == 0) {
+            emit_input_levels();
+            continue;
+        }
         if (strcmp(topic, "speech/text") != 0) continue;
         copy_json_string(line, "status", status, sizeof(status));
         if (strcmp(status, "working") == 0) hakimi_display_set_agent_state("WORKING");
@@ -208,8 +243,11 @@ static esp_err_t setup_buttons(void)
         .intr_type = GPIO_INTR_DISABLE,
     };
     ESP_RETURN_ON_ERROR(gpio_config(&config), TAG, "button GPIO init failed");
-    return xTaskCreate(button_task, "hakimi_buttons", 3072, NULL, 8, NULL) == pdPASS
-        ? ESP_OK : ESP_ERR_NO_MEM;
+    if (xTaskCreate(button_task, "hakimi_buttons", 3072, NULL, 8, NULL) != pdPASS) {
+        return ESP_ERR_NO_MEM;
+    }
+    emit_input_levels();
+    return ESP_OK;
 }
 
 static esp_err_t setup_microphone(esp_codec_dev_handle_t *microphone)
@@ -313,7 +351,32 @@ void app_main(void)
     setvbuf(stdout, NULL, _IONBF, 0);
     uart_output_mutex = xSemaphoreCreateMutex();
     ESP_ERROR_CHECK(uart_output_mutex ? ESP_OK : ESP_ERR_NO_MEM);
-    ESP_ERROR_CHECK(uart_set_baudrate(UART_NUM_0, SERIAL_BAUD_RATE));
+    const uart_config_t uart_config = {
+        .baud_rate = SERIAL_BAUD_RATE,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+    ESP_ERROR_CHECK(uart_param_config(UART_NUM_0, &uart_config));
+    ESP_ERROR_CHECK(uart_set_pin(
+        UART_NUM_0,
+        UART_PIN_NO_CHANGE,
+        UART_PIN_NO_CHANGE,
+        UART_PIN_NO_CHANGE,
+        UART_PIN_NO_CHANGE
+    ));
+    const esp_err_t uart_driver_result = uart_driver_install(
+        UART_NUM_0,
+        CONTROL_RX_BUFFER_BYTES,
+        4096,
+        0,
+        NULL,
+        0
+    );
+    ESP_ERROR_CHECK(uart_driver_result == ESP_OK || uart_driver_result == ESP_ERR_INVALID_STATE
+        ? ESP_OK : uart_driver_result);
     emit_status("starting", "initializing display, buttons, and ES8311 microphone");
 
     const esp_err_t display_result = hakimi_display_init();
@@ -321,7 +384,7 @@ void app_main(void)
         ESP_LOGW(TAG, "display initialization failed: %s; continuing audio-only", esp_err_to_name(display_result));
     }
     ESP_ERROR_CHECK(setup_buttons());
-    if (xTaskCreate(control_task, "hakimi_control", 3072, NULL, 5, NULL) != pdPASS) {
+    if (xTaskCreate(control_task, "hakimi_control", 8192, NULL, 5, NULL) != pdPASS) {
         ESP_LOGW(TAG, "control task could not start; screen will keep local status");
     }
 
