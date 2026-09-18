@@ -1,7 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 
+#include "driver/gpio.h"
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
 #include "driver/uart.h"
@@ -10,10 +12,14 @@
 #include "esp_check.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "es8311_codec.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "mbedtls/base64.h"
+
+#include "display.h"
 
 #define SERIAL_BAUD_RATE 4000000
 #define SAMPLE_RATE 16000
@@ -33,11 +39,29 @@
 #define I2S_DOUT GPIO_NUM_9
 #define I2S_DIN GPIO_NUM_11
 
+#define SW1_GPIO GPIO_NUM_50
+#define SW2_GPIO GPIO_NUM_49
+#define SW3_GPIO GPIO_NUM_5
+#define BUTTON_SAMPLE_MS 5
+#define BUTTON_DEBOUNCE_MS 25
+#define BUTTON_LONG_PRESS_MS 700
+
 static const char *TAG = "hakimi-serial-audio";
+static SemaphoreHandle_t uart_output_mutex;
+
+static void emit_line(const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    if (uart_output_mutex) xSemaphoreTake(uart_output_mutex, portMAX_DELAY);
+    vprintf(format, args);
+    if (uart_output_mutex) xSemaphoreGive(uart_output_mutex);
+    va_end(args);
+}
 
 static void emit_status(const char *state, const char *detail)
 {
-    printf(
+    emit_line(
         "{\"topic\":\"audio/status\",\"payload\":{\"state\":\"%s\",\"sampleRate\":%d,\"channels\":%d,\"bitsPerSample\":%d,\"encoding\":\"s16le\",\"detail\":\"%s\"}}\n",
         state,
         SAMPLE_RATE,
@@ -63,7 +87,7 @@ static void emit_pcm(uint32_t sequence, const uint8_t *pcm)
         return;
     }
     encoded[encoded_length] = '\0';
-    printf(
+    emit_line(
         "{\"topic\":\"audio/pcm\",\"payload\":{\"seq\":%lu,\"sampleRate\":%d,\"channels\":%d,\"bitsPerSample\":%d,\"encoding\":\"s16le\",\"dataBase64\":\"%s\"}}\n",
         (unsigned long)sequence,
         SAMPLE_RATE,
@@ -71,6 +95,121 @@ static void emit_pcm(uint32_t sequence, const uint8_t *pcm)
         BITS_PER_SAMPLE,
         encoded
     );
+}
+
+static void emit_input_event(const char *control, const char *event, const char *gesture, const char *action)
+{
+    emit_line(
+        "{\"topic\":\"input/event\",\"payload\":{\"control\":\"%s\",\"event\":\"%s\",\"gesture\":\"%s\",\"action\":\"%s\",\"tsMs\":%lld}}\n",
+        control,
+        event,
+        gesture,
+        action,
+        (long long)(esp_timer_get_time() / 1000)
+    );
+}
+
+typedef struct {
+    gpio_num_t gpio;
+    const char *control;
+    const char *event;
+    const char *short_action;
+    bool stable_pressed;
+    bool long_sent;
+    uint32_t transition_ms;
+    uint32_t pressed_ms;
+} button_state_t;
+
+static void button_task(void *arg)
+{
+    (void)arg;
+    button_state_t buttons[] = {
+        {SW1_GPIO, "SW1", "button.sw1", "agent_prompt", false, false, 0, 0},
+        {SW2_GPIO, "SW2", "button.sw2", "backspace", false, false, 0, 0},
+        {SW3_GPIO, "SW3", "button.sw3", "command_tab", false, false, 0, 0},
+    };
+    while (true) {
+        for (size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i += 1) {
+            button_state_t *button = &buttons[i];
+            const bool raw_pressed = gpio_get_level(button->gpio) == 0;
+            if (raw_pressed != button->stable_pressed) {
+                button->transition_ms += BUTTON_SAMPLE_MS;
+                if (button->transition_ms < BUTTON_DEBOUNCE_MS) continue;
+                button->transition_ms = 0;
+                button->stable_pressed = raw_pressed;
+                if (raw_pressed) {
+                    button->pressed_ms = 0;
+                    button->long_sent = false;
+                } else if (button->long_sent) {
+                    if (i == 0) hakimi_display_set_voice_active(false);
+                    emit_input_event(button->control, "button.sw1.hold", "hold_end", "voice_ptt");
+                } else {
+                    char event_name[32];
+                    snprintf(event_name, sizeof(event_name), "%s.short_press", button->event);
+                    emit_input_event(button->control, event_name, "short_press", button->short_action);
+                }
+            } else {
+                button->transition_ms = 0;
+            }
+            if (button->stable_pressed) {
+                button->pressed_ms += BUTTON_SAMPLE_MS;
+                if (i == 0 && !button->long_sent && button->pressed_ms >= BUTTON_LONG_PRESS_MS) {
+                    button->long_sent = true;
+                    hakimi_display_set_voice_active(true);
+                    emit_input_event(button->control, "button.sw1.hold", "hold_start", "voice_ptt");
+                }
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(BUTTON_SAMPLE_MS));
+    }
+}
+
+static void copy_json_string(const char *line, const char *key, char *output, size_t output_size)
+{
+    output[0] = '\0';
+    char needle[48];
+    snprintf(needle, sizeof(needle), "\"%s\":\"", key);
+    const char *start = strstr(line, needle);
+    if (!start) return;
+    start += strlen(needle);
+    const char *end = strchr(start, '"');
+    if (!end) return;
+    size_t length = (size_t)(end - start);
+    if (length >= output_size) length = output_size - 1;
+    memcpy(output, start, length);
+    output[length] = '\0';
+}
+
+static void control_task(void *arg)
+{
+    (void)arg;
+    char line[1024];
+    while (fgets(line, sizeof(line), stdin)) {
+        char topic[32];
+        char status[32];
+        copy_json_string(line, "topic", topic, sizeof(topic));
+        if (strcmp(topic, "speech/text") != 0) continue;
+        copy_json_string(line, "status", status, sizeof(status));
+        if (strcmp(status, "working") == 0) hakimi_display_set_agent_state("WORKING");
+        else if (strcmp(status, "error") == 0) hakimi_display_set_agent_state("ERROR");
+        else if (strcmp(status, "done") == 0) hakimi_display_set_agent_state("DONE");
+        else hakimi_display_set_agent_state("IDLE");
+    }
+    vTaskDelete(NULL);
+}
+
+static esp_err_t setup_buttons(void)
+{
+    const gpio_config_t config = {
+        .pin_bit_mask = (1ULL << SW1_GPIO) | (1ULL << SW2_GPIO) | (1ULL << SW3_GPIO),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_RETURN_ON_ERROR(gpio_config(&config), TAG, "button GPIO init failed");
+    return xTaskCreate(button_task, "hakimi_buttons", 3072, NULL, 8, NULL) == pdPASS
+        ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
 static esp_err_t setup_microphone(esp_codec_dev_handle_t *microphone)
@@ -172,8 +311,19 @@ void app_main(void)
     // The top Type-C connector remains on the CH343/UART path. The desktop
     // bridge uses this same link for JSONL control and Base64-wrapped PCM.
     setvbuf(stdout, NULL, _IONBF, 0);
+    uart_output_mutex = xSemaphoreCreateMutex();
+    ESP_ERROR_CHECK(uart_output_mutex ? ESP_OK : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK(uart_set_baudrate(UART_NUM_0, SERIAL_BAUD_RATE));
-    emit_status("starting", "initializing ES8311 microphone");
+    emit_status("starting", "initializing display, buttons, and ES8311 microphone");
+
+    const esp_err_t display_result = hakimi_display_init();
+    if (display_result != ESP_OK) {
+        ESP_LOGW(TAG, "display initialization failed: %s; continuing audio-only", esp_err_to_name(display_result));
+    }
+    ESP_ERROR_CHECK(setup_buttons());
+    if (xTaskCreate(control_task, "hakimi_control", 3072, NULL, 5, NULL) != pdPASS) {
+        ESP_LOGW(TAG, "control task could not start; screen will keep local status");
+    }
 
     esp_codec_dev_handle_t microphone = NULL;
     const esp_err_t setup_result = setup_microphone(&microphone);

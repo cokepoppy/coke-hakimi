@@ -11,6 +11,9 @@ Independent macOS Electron + TypeScript bridge for the custom ESP32-P4 Hakimi fi
 - Has a vendor-neutral `AgentSnapshot` boundary with initial best-effort Codex and Claude Code adapters.
 - Detects the connected P4 chip revision through `esptool` and records the V1/V3 family before any future firmware update.
 - Maps `input/event` packets to voice PTT, cursor arrows, Backspace, Enter, and Command+Tab.
+- Drives the physical horizontal LCD with a small pixel-pet status screen and
+  maps the three HachimoDock buttons to voice PTT, Enter, Backspace, and
+  Command+Tab.
 - Ships an earlier V3-only native USB UAC proof under `firmware/uac/` for fallback/reference.
 - Ships the active V3-only serial microphone proof under `firmware/serial-audio/`.
 
@@ -19,6 +22,18 @@ The serial-audio image reads the Waveshare ES8311 microphone at 16 kHz and sends
 20 ms PCM frames as JSONL. Electron forwards them to the macOS `BlackHole 2ch`
 virtual microphone only while voice PTT or the explicit audio test is active;
 Electron does not run ASR, so Doubao remains responsible for speech-to-text.
+
+The current physical controls are:
+
+- `SW1` long press: focus Codex and hold macOS `Fn` for Doubao voice input;
+  release it to finish the utterance.
+- `SW1` short press: press Enter in the focused agent input.
+- `SW2` short press: Backspace.
+- `SW3` short press: Command+Tab.
+
+The LCD is rendered as a 640x480 horizontal UI on the 480x640 ST7701S panel.
+It shows `VOICE` while SW1 is held and mirrors the generic agent state
+(`READY`, `WORKING`, `DONE`, or `ERROR`) sent by the Electron adapter layer.
 
 ## Run
 

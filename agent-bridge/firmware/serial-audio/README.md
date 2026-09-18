@@ -34,5 +34,27 @@ The generated factory image is:
 
 The post-build hook bounds both images to ESP32-P4 full revisions 300-399.
 The device currently detected in this workspace is revision 3.2, so it is
-inside that gate. This proof does not yet include the full HachimoDock screen
-renderer or button protocol; the first hardware test is microphone transport.
+inside that gate.
+
+This image also initializes the horizontal K2802MIPI-15P V2 / ST7701S LCD and
+the three physical controls from the HachimoDock V3 mapping:
+
+```text
+LCD reset GPIO27 · backlight GPIO26 · one-lane MIPI DSI · 480x640 panel
+SW1 GPIO50 · SW2 GPIO49 · SW3 GPIO5 (active low with pull-ups)
+```
+
+The rendered logical canvas is 640x480 and is rotated into the panel, so the
+screen is intended to be mounted horizontally. `SW1` long press emits
+`button.sw1.hold` with `voice_ptt` start/end gestures; SW1 short press emits
+`agent_prompt`; SW2 emits `backspace`; SW3 emits `command_tab`.
+
+The firmware keeps PSRAM enabled for the LCD framebuffers. For the CH343
+upload path, use the no-stub command below if PlatformIO's 921600 baud upload
+reports `Invalid head of packet`:
+
+```bash
+~/.platformio/penv/bin/python -m esptool --no-stub --chip esp32p4 \
+  --port /dev/cu.usbmodem5CF71565391 --baud 460800 \
+  write-flash 0x0 .pio/build/hakimi_serial_audio_v3/firmware.factory.bin
+```
