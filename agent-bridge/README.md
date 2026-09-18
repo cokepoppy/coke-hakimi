@@ -8,12 +8,20 @@ Independent macOS Electron + TypeScript bridge for the custom ESP32-P4 Hakimi fi
 - Shows raw device messages and serial diagnostics.
 - Provides safe manual tests for Codex activation, Backspace, arrow keys, Fn, and Command+Tab.
 - Reports whether macOS Accessibility is enabled.
-- Has a vendor-neutral `AgentSnapshot` boundary with initial best-effort Codex and Claude Code adapters.
+- Has a vendor-neutral `AgentSnapshot` boundary with Codex and Claude Code adapters.
+- The Codex adapter reads the newest `~/.codex/sessions/**/*.jsonl`, prefers the
+  completed turn's `last_agent_message` or assistant `final_answer`, and falls
+  back to the latest assistant output while a turn is running. It removes code
+  blocks and memory citations, then compacts long output before sending it to
+  the small LCD.
 - Detects the connected P4 chip revision through `esptool` and records the V1/V3 family before any future firmware update.
 - Maps `input/event` packets to voice PTT, cursor arrows, Backspace, and Enter; Command+Tab remains a separate bridge action.
 - Drives the physical horizontal LCD with a light industrial LVGL status and
   chat screen; the three HachimoDock buttons are voice PTT, Backspace, and
   Enter/send. Command+Tab remains a bridge-side combination action.
+- Uses a GB2312-backed Source Han Sans SC 14 CJK font so ordinary Chinese
+  Codex/Doubao messages render without square placeholders. The font is
+  compiled from `firmware/serial-audio/main/hakimi_font_cjk_14.c`.
 - Ships an earlier V3-only native USB UAC proof under `firmware/uac/` for fallback/reference.
 - Ships the active V3-only serial microphone proof under `firmware/serial-audio/`.
 

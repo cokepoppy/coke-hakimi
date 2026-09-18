@@ -224,7 +224,7 @@ function refreshComposerStatus(): void {
 }
 
 function messageText(snapshot: BridgeState['snapshots'][number]): string {
-  return [snapshot.stage, snapshot.summary || snapshot.lastLog].filter(Boolean).join(' · ').slice(0, 180)
+  return [snapshot.stage, snapshot.summary || snapshot.lastLog].filter(Boolean).join(' · ').slice(0, 240)
     || '暂无新的 Agent 输出';
 }
 

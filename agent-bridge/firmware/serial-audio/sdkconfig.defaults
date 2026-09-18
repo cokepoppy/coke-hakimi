@@ -11,3 +11,8 @@ CONFIG_CACHE_L2_CACHE_128KB=y
 CONFIG_CACHE_L2_CACHE_LINE_128B=y
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_FREERTOS_HZ=1000
+# The complete Hakimi GB2312 font is compiled from main/hakimi_font_cjk_14.c.
+# Keep LVGL's smaller curated Source Han subset disabled to avoid duplicating
+# about 1 MB of glyph data in the firmware image.
+# CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_14_CJK is not set
+# CONFIG_LV_FONT_DEFAULT_SOURCE_HAN_SANS_SC_14_CJK is not set

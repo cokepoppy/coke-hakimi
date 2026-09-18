@@ -16,6 +16,11 @@
 #include "hal/mipi_dsi_host_ll.h"
 #include "lvgl.h"
 
+// The bundled LVGL Source Han subset omits many common Chinese characters.
+// Hakimi ships a GB2312-backed font so Codex/Doubao messages do not turn into
+// square placeholders when they contain ordinary Simplified Chinese text.
+extern const lv_font_t hakimi_font_cjk_14;
+
 #define LCD_WIDTH 480
 #define LCD_HEIGHT 640
 #define UI_WIDTH 640
@@ -109,10 +114,7 @@ static lv_obj_t *make_label(lv_obj_t *parent, const char *text, lv_color_t color
     lv_obj_set_width(label, width);
     lv_obj_set_height(label, height);
     lv_obj_set_style_text_color(label, color, 0);
-    // Keep the first hardware build on LVGL's default built-in font set.
-    // The 18 px font is not enabled by the board's generated lv_conf.h yet;
-    // size remains a layout hint until we add a dedicated CJK font asset.
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(label, &hakimi_font_cjk_14, 0);
     return label;
 }
 

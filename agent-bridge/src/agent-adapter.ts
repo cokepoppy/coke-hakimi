@@ -3,6 +3,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentSnapshot } from './protocol';
 
+type JsonRecord = Record<string, unknown>;
+
 export interface AgentAdapter {
   readonly id: string;
   readonly name: string;
@@ -10,10 +12,31 @@ export interface AgentAdapter {
   snapshot(): Promise<AgentSnapshot>;
 }
 
-function clampText(value: unknown, max = 180): string | undefined {
+function clampText(value: unknown, max = 220): string | undefined {
   if (typeof value !== 'string') return undefined;
-  const clean = value.replace(/\s+/g, ' ').trim();
+  const clean = value
+    .replace(/<oai-mem-citation>[\s\S]*?<\/oai-mem-citation>/gi, '')
+    .replace(/```[\s\S]*?```/g, '[code omitted]')
+    .replace(/\s+/g, ' ')
+    .trim();
   return clean ? clean.slice(0, max) : undefined;
+}
+
+function compactText(value: unknown, max = 180): string | undefined {
+  const clean = clampText(value, Number.MAX_SAFE_INTEGER);
+  if (!clean) return undefined;
+  if (clean.length <= max) return clean;
+  const head = Math.max(32, Math.floor(max * 0.55));
+  const tail = Math.max(24, max - head - 5);
+  return `${clean.slice(0, head)} ... ${clean.slice(-tail)}`;
+}
+
+function asRecord(value: unknown): JsonRecord | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : undefined;
+}
+
+function recordPayload(record: JsonRecord): JsonRecord {
+  return asRecord(record.payload) || record;
 }
 
 function projectFromPath(path?: string): { name?: string; path?: string } {
@@ -54,7 +77,7 @@ function findRecentCodexFile(): { path?: string; mtime?: number } {
 function readRecentJsonl(path?: string): Record<string, unknown>[] {
   if (!path) return [];
   try {
-    const lines = readFileSync(path, 'utf8').split('\n').slice(-80);
+    const lines = readFileSync(path, 'utf8').split('\n').slice(-240);
     return lines.flatMap((line) => {
       try {
         const value = JSON.parse(line) as unknown;
@@ -68,22 +91,89 @@ function readRecentJsonl(path?: string): Record<string, unknown>[] {
   }
 }
 
-function textFromRecord(record: Record<string, unknown>): string | undefined {
-  const candidates = [record.text, record.message, record.content, record.title, record.summary];
-  for (const candidate of candidates) {
-    const text = clampText(candidate);
-    if (text) return text;
+function assistantContentText(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (!Array.isArray(value)) return undefined;
+  const parts: string[] = [];
+  for (const item of value) {
+    const record = asRecord(item);
+    if (!record) continue;
+    const type = String(record.type || '').toLowerCase();
+    if (type && !['text', 'output_text', 'input_text'].includes(type)) continue;
+    if (typeof record.text === 'string') parts.push(record.text);
   }
+  return parts.join('\n');
+}
+
+function stateFromCodexRecord(record: JsonRecord): AgentSnapshot['state'] | undefined {
+  const payload = recordPayload(record);
+  const type = String(payload.type || '').toLowerCase();
+  const status = String(payload.status || payload.state || '').toLowerCase();
+  const raw = `${type} ${status}`;
+  if (/task_complete|turn_complete|turn_completed|success|finished/.test(raw)) return 'done';
+  if (/abort|error|failed|failure/.test(raw)) return 'error';
+  if (/wait|approval|confirm|request_user_input/.test(raw)) return 'waiting_user';
+  if (type === 'message' && payload.role === 'assistant' && payload.phase === 'final_answer') return 'done';
+  if (/turn_started|task_started|function_call|reasoning|tool/.test(raw)) return 'working';
   return undefined;
 }
 
-function stateFromRecord(record: Record<string, unknown>): AgentSnapshot['state'] | undefined {
-  const raw = String(record.state ?? record.status ?? record.type ?? '').toLowerCase();
-  if (/error|failed|failure/.test(raw)) return 'error';
-  if (/wait|approval|confirm/.test(raw)) return 'waiting_user';
-  if (/done|complete|finished|success/.test(raw)) return 'done';
-  if (/work|run|tool|turn|think|command|edit/.test(raw)) return 'working';
-  return undefined;
+function textFromCodexRecord(record: JsonRecord): { text?: string; final: boolean } {
+  const payload = recordPayload(record);
+  const type = String(payload.type || '').toLowerCase();
+  if (type === 'task_complete' && typeof payload.last_agent_message === 'string') {
+    return { text: payload.last_agent_message, final: true };
+  }
+  if (type !== 'message' || payload.role !== 'assistant') return { final: false };
+  return {
+    text: assistantContentText(payload.content),
+    final: payload.phase === 'final_answer',
+  };
+}
+
+type CodexSessionData = {
+  state?: AgentSnapshot['state'];
+  summary?: string;
+  title?: string;
+  projectPath?: string;
+  sessionId?: string;
+};
+
+function extractCodexSessionData(records: JsonRecord[]): CodexSessionData {
+  let state: AgentSnapshot['state'] | undefined;
+  let latestAssistant: string | undefined;
+  let latestFinal: string | undefined;
+  let title: string | undefined;
+  let projectPath: string | undefined;
+  let sessionId: string | undefined;
+
+  for (const record of records) {
+    const payload = recordPayload(record);
+    state = stateFromCodexRecord(record) ?? state;
+    if (typeof payload.title === 'string') title = payload.title;
+    if (typeof payload.sessionTitle === 'string') title = payload.sessionTitle;
+    if (typeof payload.cwd === 'string') projectPath = payload.cwd;
+    if (typeof payload.workdir === 'string') projectPath = payload.workdir;
+    if (typeof payload.thread_id === 'string') sessionId = payload.thread_id;
+    if (typeof payload.session_id === 'string') sessionId = payload.session_id;
+
+    const output = textFromCodexRecord(record);
+    if (output.text) {
+      latestAssistant = output.text;
+      if (output.final) latestFinal = output.text;
+    }
+  }
+
+  const selectedText = state === 'done'
+    ? latestFinal || latestAssistant
+    : latestAssistant || latestFinal;
+  return {
+    state,
+    summary: compactText(selectedText),
+    title: clampText(title, 96),
+    projectPath: clampText(projectPath, 220),
+    sessionId: clampText(sessionId, 120),
+  };
 }
 
 function processLooksAlive(): boolean {
@@ -118,33 +208,22 @@ export class CodexAdapter implements AgentAdapter {
   async snapshot(): Promise<AgentSnapshot> {
     const recent = findRecentCodexFile();
     const records = readRecentJsonl(recent.path);
-    let state: AgentSnapshot['state'] = processLooksAlive() ? 'working' : 'idle';
-    let summary: string | undefined;
-    let title: string | undefined;
-    let projectPath: string | undefined;
-    let sessionId: string | undefined;
+    const data = extractCodexSessionData(records);
+    const state: AgentSnapshot['state'] = data.state || (processLooksAlive() ? 'working' : 'idle');
 
-    for (const record of records) {
-      state = stateFromRecord(record) ?? state;
-      title ||= clampText(record.title ?? record.sessionTitle ?? record.name, 96);
-      summary = textFromRecord(record) ?? summary;
-      projectPath ||= clampText(record.cwd ?? record.workdir ?? record.projectPath, 220);
-      sessionId ||= clampText(record.sessionId ?? record.id, 120);
-    }
-
-    const project = projectFromPath(projectPath);
+    const project = projectFromPath(data.projectPath);
     return {
       agentId: this.id,
       agentName: this.name,
       projectName: project.name,
       projectPath: project.path,
-      sessionId,
-      title,
+      sessionId: data.sessionId,
+      title: data.title,
       state,
-      stage: state === 'working' ? 'observing session' : undefined,
-      summary,
-      lastLog: summary,
-      updatedAt: Date.now(),
+      stage: data.summary ? (state === 'done' ? 'last answer' : 'latest output') : undefined,
+      summary: data.summary,
+      lastLog: data.summary,
+      updatedAt: recent.mtime || Date.now(),
     };
   }
 }
