@@ -238,6 +238,19 @@ func windowImage(for windowID: CGWindowID) -> CGImage? {
     return createImage(.null, .optionIncludingWindow, windowID, [.bestResolution, .boundsIgnoreFraming])
 }
 
+func normalizedComposerToken(_ text: String) -> String {
+    text.lowercased().filter { $0.isLetter || $0.isNumber }.map(String.init).joined()
+}
+
+func isComposerPlaceholder(_ text: String) -> Bool {
+    let token = normalizedComposerToken(text)
+    return [
+        "doanything", "doanythin", "doanythinq",
+        "oanything", "oanythin", "askanything", "askanythin",
+        "输入消息", "输入内容",
+    ].contains(token)
+}
+
 func ocrComposerText(for app: NSRunningApplication) -> String? {
     guard let windowID = frontWindowID(for: app.processIdentifier),
           let windowCapture = windowImage(for: windowID) else { return nil }
@@ -266,17 +279,21 @@ func ocrComposerText(for app: NSRunningApplication) -> String? {
     request.minimumTextHeight = 0.01
     let handler = VNImageRequestHandler(cgImage: composerImage, options: [:])
     do { try handler.perform([request]) } catch { return nil }
-    let lines = (request.results ?? [])
+    let recognizedLines = (request.results ?? [])
         .sorted { $0.boundingBox.minY > $1.boundingBox.minY }
         .compactMap { $0.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines) }
         .filter { !$0.isEmpty }
-    guard !lines.isEmpty else { return "" }
-    let text = lines.joined(separator: "\n")
-    let folded = text.lowercased().replacingOccurrences(of: " ", with: "")
-    if folded == "doanything" || folded == "oanything" || folded == "askanything" || folded == "输入消息" {
-        return ""
-    }
-    return text
+    guard !recognizedLines.isEmpty else { return "" }
+
+    // Vision can return the gray placeholder together with a caret/icon, or
+    // split it into multiple observations. Filter each observation and then
+    // check the combined token as well, so the placeholder never becomes a
+    // real draft on the device.
+    let combinedToken = normalizedComposerToken(recognizedLines.joined())
+    let placeholderTokens = ["doanything", "oanything", "askanything", "输入消息", "输入内容"]
+    if placeholderTokens.contains(combinedToken) { return "" }
+    let lines = recognizedLines.filter { !isComposerPlaceholder($0) }
+    return lines.joined(separator: "\n")
 }
 
 func ocrComposerSnapshot(app: NSRunningApplication, appName: String) -> [String: Any]? {
