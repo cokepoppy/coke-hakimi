@@ -20,6 +20,8 @@
 // Hakimi ships a GB2312-backed font so Codex/Doubao messages do not turn into
 // square placeholders when they contain ordinary Simplified Chinese text.
 extern const lv_font_t hakimi_font_cjk_14;
+extern const lv_font_t hakimi_font_cjk_16;
+extern const lv_font_t hakimi_font_cjk_18;
 extern const lv_image_dsc_t hakimi_pet_idle;
 extern const lv_image_dsc_t hakimi_pet_working;
 extern const lv_image_dsc_t hakimi_pet_waiting;
@@ -168,12 +170,12 @@ static lv_obj_t *make_label(lv_obj_t *parent, const char *text, lv_color_t color
     lv_obj_set_width(label, width);
     lv_obj_set_height(label, height);
     lv_obj_set_style_text_color(label, color, 0);
-    lv_obj_set_style_text_font(label, &hakimi_font_cjk_14, 0);
-    // Keep the complete 14 px CJK font (which is proven on this board), but
-    // scale only the high-priority text so the firmware does not need another
-    // multi-megabyte full CJK font.  LVGL's transform scale uses 256 = 100%.
-    // The width/height arguments for a large label are its pre-scale box;
-    // callers size that box so the transformed result remains inside its card.
+    lv_obj_set_style_text_font(label,
+                               size >= 18 ? &hakimi_font_cjk_18 : (size >= 16 ? &hakimi_font_cjk_16 : &hakimi_font_cjk_14),
+                               0);
+    // Use real font metrics for the main output.  A previous transform-based
+    // enlargement could disappear for wrapped CJK text on the MIPI panel.
+    // Native 18 px glyphs keep LVGL's wrapping and clipping reliable.
     lv_obj_set_style_transform_scale(label, size >= 18 ? 320 : 256, 0);
     lv_obj_set_style_transform_pivot_x(label, 0, 0);
     lv_obj_set_style_transform_pivot_y(label, 0, 0);
@@ -229,8 +231,13 @@ static void create_ui(void)
     // LVGL's transformed labels work for short status text, but its wrapped
     // transformed label can disappear on the real panel even when the
     // off-screen buffer contains pixels. Keep this multiline CJK label native
-    // and reliable first; the card now has enough area for readable 14 px text.
-    g_agent_message_label = make_label(g_agent_bubble, g_agent_message, graphite, 14, 450, 276);
+    // and reliable first; the card now has enough area for readable 18 px text.
+    // Leave a deliberate right margin inside the card.  This keeps long
+    // CJK/ASCII runs inside the rounded panel instead of ending at its edge.
+    g_agent_message_label = make_label(g_agent_bubble, g_agent_message, graphite, 18, 400, 276);
+    // The status rail still uses the legacy transform for its compact label,
+    // but the multiline output must stay at native scale on the MIPI panel.
+    lv_obj_set_style_transform_scale(g_agent_message_label, 256, 0);
     lv_obj_set_pos(g_agent_message_label, 12, 12);
 
     g_draft_box = lv_obj_create(root);

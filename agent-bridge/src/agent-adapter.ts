@@ -220,7 +220,9 @@ export class CodexAdapter implements AgentAdapter {
       sessionId: data.sessionId,
       title: data.title,
       state,
-      stage: data.summary ? (state === 'done' ? 'last answer' : 'latest output') : undefined,
+      // The device already has a dedicated status area.  Do not turn the
+      // terminal's presentation label into part of the user-facing answer.
+      stage: data.summary && state !== 'done' ? 'latest output' : undefined,
       summary: data.summary,
       lastLog: data.summary,
       updatedAt: recent.mtime || Date.now(),

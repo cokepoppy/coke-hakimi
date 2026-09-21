@@ -224,8 +224,14 @@ function refreshComposerStatus(): void {
 }
 
 function messageText(snapshot: BridgeState['snapshots'][number]): string {
-  return [snapshot.stage, snapshot.summary || snapshot.lastLog].filter(Boolean).join(' · ').slice(0, 240)
-    || '暂无新的 Agent 输出';
+  const body = (snapshot.summary || snapshot.lastLog || '')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    // These separators are not needed on the device and some are absent from
+    // its CJK font, where they render as a square/garbled glyph.
+    .replace(/[·•▪◦\uFFFD\u25A1]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return body.slice(0, 200) || '暂无新的 Agent 输出';
 }
 
 async function syncAgentToDevice(snapshots: BridgeState['snapshots']): Promise<void> {

@@ -21,3 +21,5 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # about 1 MB of glyph data in the firmware image.
 # CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_14_CJK is not set
 # CONFIG_LV_FONT_DEFAULT_SOURCE_HAN_SANS_SC_14_CJK is not set
+# The 18 px full CJK font exceeds LVGL's compact 20-bit bitmap index.
+CONFIG_LV_FONT_FMT_TXT_LARGE=y
