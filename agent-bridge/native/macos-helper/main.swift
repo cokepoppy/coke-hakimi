@@ -244,11 +244,19 @@ func normalizedComposerToken(_ text: String) -> String {
 
 func isComposerPlaceholder(_ text: String) -> Bool {
     let token = normalizedComposerToken(text)
-    return [
-        "doanything", "doanythin", "doanythinq",
+    if [
+        "doanything", "doanythin", "doanythinq", "poanything",
         "oanything", "oanythin", "askanything", "askanythin",
         "输入消息", "输入内容",
-    ].contains(token)
+    ].contains(token) { return true }
+    // Vision occasionally reads the gray leading D as P/O and still keeps
+    // the stable "anything" suffix. Treat only these short placeholder-like
+    // prefixes as the default; do not discard ordinary user sentences.
+    if token.hasSuffix("anything") {
+        let prefix = String(token.dropLast("anything".count))
+        return ["d", "do", "p", "po", "o", "ask"].contains(prefix)
+    }
+    return false
 }
 
 func ocrComposerText(for app: NSRunningApplication) -> String? {
@@ -290,8 +298,7 @@ func ocrComposerText(for app: NSRunningApplication) -> String? {
     // check the combined token as well, so the placeholder never becomes a
     // real draft on the device.
     let combinedToken = normalizedComposerToken(recognizedLines.joined())
-    let placeholderTokens = ["doanything", "oanything", "askanything", "输入消息", "输入内容"]
-    if placeholderTokens.contains(combinedToken) { return "" }
+    if isComposerPlaceholder(combinedToken) { return "" }
     let lines = recognizedLines.filter { !isComposerPlaceholder($0) }
     return lines.joined(separator: "\n")
 }
