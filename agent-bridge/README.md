@@ -19,10 +19,11 @@ Independent macOS Electron + TypeScript bridge for the custom ESP32-P4 Hakimi fi
 - Drives the physical horizontal LCD with a light industrial LVGL status and
   chat screen; the three HachimoDock buttons are voice PTT, Backspace, and
   Enter/send. Command+Tab remains a bridge-side combination action.
-- Uses a GB2312-backed Source Han Sans SC 14 CJK font so ordinary Chinese
-  Codex/Doubao messages render without square placeholders. High-priority
-  Agent output and draft labels are scaled to 125% by LVGL rather than adding
-  a second multi-megabyte CJK font.
+- Uses a GB2312-backed Source Han Sans SC 14 CJK font for compact labels and a
+  native 20 px full CJK font for Agent output, so ordinary Chinese
+  Codex/Doubao messages render without square placeholders. The larger Agent
+  text is native glyph rendering rather than LVGL transform scaling, which
+  keeps wrapped Chinese text visible on the physical MIPI panel.
 - Embeds four 96 px RGB565 pet frames for IDLE, WORKING, WAITING/ERROR, and
   DONE in `firmware/serial-audio/main/hakimi_pet_frames.c`; the source sprite
   sheet is kept at `firmware/serial-audio/assets/hakimi_pet_sprite_sheet.png`.

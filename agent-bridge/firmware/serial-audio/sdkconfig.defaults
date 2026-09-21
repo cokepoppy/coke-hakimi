@@ -15,11 +15,13 @@ CONFIG_FREERTOS_HZ=1000
 # than the default 1 MB factory partition. Use the checked-in 4 MB layout.
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
-# The complete Hakimi GB2312 font is compiled from main/hakimi_font_cjk_14.c;
-# high-priority labels use LVGL transform scaling to avoid duplicating it.
+# Compact labels use main/hakimi_font_cjk_14.c and Agent output uses the native
+# main/hakimi_font_cjk_20.c font. The larger text deliberately avoids LVGL
+# transform scaling because transformed wrapped CJK text can disappear on the
+# physical MIPI panel.
 # Keep LVGL's smaller curated Source Han subset disabled to avoid duplicating
 # about 1 MB of glyph data in the firmware image.
 # CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_14_CJK is not set
 # CONFIG_LV_FONT_DEFAULT_SOURCE_HAN_SANS_SC_14_CJK is not set
-# The 18 px full CJK font exceeds LVGL's compact 20-bit bitmap index.
+# The full 20 px CJK font requires LVGL's large bitmap index.
 CONFIG_LV_FONT_FMT_TXT_LARGE=y
