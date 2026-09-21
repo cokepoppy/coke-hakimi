@@ -116,7 +116,6 @@ static void lvgl_flush_cb(lv_display_t *display, const lv_area_t *area, uint8_t 
     static uint16_t row[LCD_WIDTH];
     size_t agent_ink_pixels = 0;
     size_t draft_ink_pixels = 0;
-    const uint16_t agent_background = (uint16_t)(((0xE1 >> 3) << 11) | ((0xE3 >> 2) << 5) | (0xDE >> 3));
     const uint16_t draft_background = (uint16_t)(((0xFB >> 3) << 11) | ((0xFA >> 2) << 5) | (0xF6 >> 3));
     for (int panel_y = 0; panel_y < LCD_HEIGHT; panel_y += LCD_ROW_CHUNK) {
         const int height = panel_y + LCD_ROW_CHUNK > LCD_HEIGHT ? LCD_HEIGHT - panel_y : LCD_ROW_CHUNK;
@@ -127,13 +126,19 @@ static void lvgl_flush_cb(lv_display_t *display, const lv_area_t *area, uint8_t 
                 const int logical_y = UI_HEIGHT - 1 - physical_x;
                 const uint16_t pixel = source[logical_y * UI_WIDTH + logical_x];
                 row[physical_x] = pixel;
-                // Count non-background pixels in the two text interiors. This
-                // provides a software rendering proof because this MIPI panel
-                // has no readback path for screenshots.
-                if (logical_x >= 164 && logical_x < 614 && logical_y >= 66 && logical_y < 341 && pixel != agent_background) {
+                // Count dark glyph pixels, rather than merely counting pixels
+                // different from the card fill. Borders and antialiasing can
+                // otherwise make an empty output card look non-empty.
+                const uint8_t red = (uint8_t)(((pixel >> 11) & 0x1F) * 255 / 31);
+                const uint8_t green = (uint8_t)(((pixel >> 5) & 0x3F) * 255 / 63);
+                const uint8_t blue = (uint8_t)((pixel & 0x1F) * 255 / 31);
+                const bool dark_ink = red < 150 && green < 155 && blue < 155;
+                // This provides a software rendering proof because this MIPI
+                // panel has no readback path for screenshots.
+                if (logical_x >= 164 && logical_x < 614 && logical_y >= 66 && logical_y < 341 && dark_ink) {
                     agent_ink_pixels += 1;
                 }
-                if (logical_x >= 22 && logical_x < 610 && logical_y >= 381 && logical_y < 423 && pixel != draft_background) {
+                if (logical_x >= 22 && logical_x < 610 && logical_y >= 381 && logical_y < 423 && pixel != draft_background && dark_ink) {
                     draft_ink_pixels += 1;
                 }
             }
@@ -221,10 +226,11 @@ static void create_ui(void)
     lv_obj_set_pos(g_agent_bubble, 14, 12); lv_obj_set_size(g_agent_bubble, 474, 302); style_panel(g_agent_bubble, steel, line, 8);
     // The output is the main thing the user reads.  There is deliberately no
     // extra "AGENT / OUTPUT" caption or second input bubble competing for space.
-    // At 125% scale these become 450 x 275 px, fitting within the 474 x 302
-    // output card.  Giving LVGL a 450 x 276 pre-scale box made the transformed
-    // object larger than its parent and it could be clipped as a whole.
-    g_agent_message_label = make_label(g_agent_bubble, g_agent_message, graphite, 18, 360, 220);
+    // LVGL's transformed labels work for short status text, but its wrapped
+    // transformed label can disappear on the real panel even when the
+    // off-screen buffer contains pixels. Keep this multiline CJK label native
+    // and reliable first; the card now has enough area for readable 14 px text.
+    g_agent_message_label = make_label(g_agent_bubble, g_agent_message, graphite, 14, 450, 276);
     lv_obj_set_pos(g_agent_message_label, 12, 12);
 
     g_draft_box = lv_obj_create(root);
