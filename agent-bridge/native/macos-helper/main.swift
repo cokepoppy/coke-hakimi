@@ -5,6 +5,9 @@ import CoreGraphics
 import AVFoundation
 import AudioToolbox
 import Vision
+#if canImport(Darwin)
+import Darwin
+#endif
 
 // Small, dependency-free macOS primitive used by the Electron bridge. The
 // helper deliberately exposes small focus, keyboard, and CoreAudio operations.
@@ -224,37 +227,44 @@ func screenImage() -> CGImage? {
     }
 }
 
+func windowImage(for windowID: CGWindowID) -> CGImage? {
+    // macOS 15 marks CGWindowListCreateImage as obsolete at compile time,
+    // although the symbol remains available on the supported desktop builds.
+    // Resolve it dynamically so the helper still builds on the current SDK and
+    // can capture the Codex window without the bridge window occluding it.
+    typealias CreateImage = @convention(c) (CGRect, CGWindowListOption, CGWindowID, CGWindowImageOption) -> CGImage?
+    guard let symbol = dlsym(dlopen(nil, RTLD_LAZY), "CGWindowListCreateImage") else { return nil }
+    let createImage = unsafeBitCast(symbol, to: CreateImage.self)
+    return createImage(.null, .optionIncludingWindow, windowID, [.bestResolution, .boundsIgnoreFraming])
+}
+
 func ocrComposerText(for app: NSRunningApplication) -> String? {
     guard let windowID = frontWindowID(for: app.processIdentifier),
-          let bounds = windowBounds(for: windowID),
-          let fullScreen = screenImage() else { return nil }
-    let screenRect = CGRect(origin: .zero, size: CGSize(width: fullScreen.width, height: fullScreen.height))
-    let logicalScreen = NSScreen.main?.frame.size ?? CGSize(
-        width: CGFloat(CGDisplayPixelsWide(CGMainDisplayID())) / 2,
-        height: CGFloat(CGDisplayPixelsHigh(CGMainDisplayID())) / 2
-    )
-    let scaleX = CGFloat(fullScreen.width) / max(logicalScreen.width, 1)
-    let scaleY = CGFloat(fullScreen.height) / max(logicalScreen.height, 1)
-    // CGWindow bounds use a top-left screen coordinate system and the full
-    // screenshot is Retina; scale only to confirm the active window is visible.
-    let scaledBounds = CGRect(
-        x: bounds.origin.x * scaleX,
-        y: CGFloat(fullScreen.height) - (bounds.origin.y + bounds.height) * scaleY,
-        width: bounds.width * scaleX,
-        height: bounds.height * scaleY
-    )
-    guard !scaledBounds.intersection(screenRect).isNull else { return nil }
+          let windowCapture = windowImage(for: windowID) else { return nil }
+
+    // The composer is the upper strip of the bottom-center card. OCR over the
+    // entire Retina screen made small Chinese glyphs look like Latin fragments
+    // (for example, the visible "看就看" was reported as ",YJC"). Crop to the
+    // Codex window image first so Vision receives much larger glyphs and none
+    // of the conversation/tool labels around it. Capturing the window itself
+    // also prevents the bridge window from covering the OCR source.
+    let windowRect = CGRect(origin: .zero, size: CGSize(width: windowCapture.width, height: windowCapture.height))
+    let composerRect = CGRect(
+        x: windowRect.width * 0.22,
+        y: windowRect.height * 0.855,
+        width: windowRect.width * 0.54,
+        height: windowRect.height * 0.095
+    ).intersection(windowRect)
+    guard composerRect.width > 200,
+          composerRect.height > 60,
+          let composerImage = windowCapture.cropping(to: composerRect) else { return nil }
 
     let request = VNRecognizeTextRequest()
-    request.recognitionLevel = .fast
-    request.usesLanguageCorrection = false
+    request.recognitionLevel = .accurate
+    request.usesLanguageCorrection = true
     request.recognitionLanguages = ["zh-Hans", "en-US"]
-    // The composer input is the upper strip of the bottom-center card. Keep
-    // controls, model selector, and surrounding conversation out of OCR.
-    // ChatGPT's composer stays in the lower-center band of the active window;
-    // keep the ROI on the input baseline rather than the controls below it.
-    request.regionOfInterest = CGRect(x: 0.23, y: 0.15, width: 0.55, height: 0.04)
-    let handler = VNImageRequestHandler(cgImage: fullScreen, options: [:])
+    request.minimumTextHeight = 0.01
+    let handler = VNImageRequestHandler(cgImage: composerImage, options: [:])
     do { try handler.perform([request]) } catch { return nil }
     let lines = (request.results ?? [])
         .sorted { $0.boundingBox.minY > $1.boundingBox.minY }
