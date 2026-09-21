@@ -85,6 +85,29 @@ static const st7701_lcd_init_cmd_t g_panel_init[] = {
     {0x11, NULL, 0, 120}, {0x29, NULL, 0, 0}, {0x35, (uint8_t[]){0x00}, 1, 0},
 };
 
+static size_t utf8_byte_offset_for_character_index(const char *text, int character_index)
+{
+    if (character_index <= 0) return 0;
+    size_t offset = 0;
+    int index = 0;
+    while (text[offset] != '\0' && index < character_index) {
+        const unsigned char first = (unsigned char)text[offset];
+        size_t sequence_length = 1;
+        if ((first & 0xE0) == 0xC0) sequence_length = 2;
+        else if ((first & 0xF0) == 0xE0) sequence_length = 3;
+        else if ((first & 0xF8) == 0xF0) sequence_length = 4;
+        for (size_t byte = 1; byte < sequence_length; byte += 1) {
+            if ((text[offset + byte] & 0xC0) != 0x80) {
+                sequence_length = 1;
+                break;
+            }
+        }
+        offset += sequence_length;
+        index += 1;
+    }
+    return offset;
+}
+
 static void lvgl_flush_cb(lv_display_t *display, const lv_area_t *area, uint8_t *px_map)
 {
     (void)display;
@@ -366,7 +389,9 @@ void hakimi_display_set_input_draft(const char *text, int cursor)
     if (!g_state_mutex || !text) return;
     xSemaphoreTake(g_state_mutex, portMAX_DELAY);
     snprintf(g_input_draft, sizeof(g_input_draft), "%s", text);
-    g_input_cursor = cursor;
+    // The bridge reports a character index; the display buffer is UTF-8, so
+    // convert it once and keep the cursor on a code-point boundary.
+    g_input_cursor = (int)utf8_byte_offset_for_character_index(g_input_draft, cursor);
     xSemaphoreGive(g_state_mutex);
 }
 
