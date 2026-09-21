@@ -20,6 +20,10 @@
 // Hakimi ships a GB2312-backed font so Codex/Doubao messages do not turn into
 // square placeholders when they contain ordinary Simplified Chinese text.
 extern const lv_font_t hakimi_font_cjk_14;
+extern const lv_image_dsc_t hakimi_pet_idle;
+extern const lv_image_dsc_t hakimi_pet_working;
+extern const lv_image_dsc_t hakimi_pet_waiting;
+extern const lv_image_dsc_t hakimi_pet_done;
 
 #define LCD_WIDTH 480
 #define LCD_HEIGHT 640
@@ -40,10 +44,10 @@ static char g_input_draft[512] = "";
 static int g_input_cursor;
 
 static lv_obj_t *g_state_label;
+static lv_obj_t *g_rail_state_label;
+static lv_obj_t *g_pet_image;
 static lv_obj_t *g_agent_message_label;
 static lv_obj_t *g_draft_label;
-static lv_obj_t *g_draft_status_label;
-static lv_obj_t *g_mic_label;
 static lv_obj_t *g_agent_bubble;
 static lv_obj_t *g_draft_box;
 
@@ -115,7 +119,19 @@ static lv_obj_t *make_label(lv_obj_t *parent, const char *text, lv_color_t color
     lv_obj_set_height(label, height);
     lv_obj_set_style_text_color(label, color, 0);
     lv_obj_set_style_text_font(label, &hakimi_font_cjk_14, 0);
+    // Keep the complete 14 px CJK font (which is proven on this board), but
+    // scale only the high-priority text so the firmware does not need another
+    // multi-megabyte full CJK font.  LVGL's transform scale uses 256 = 100%.
+    lv_obj_set_style_transform_scale(label, size >= 18 ? 320 : 256, 0);
     return label;
+}
+
+static const lv_image_dsc_t *pet_for_state(const char *state)
+{
+    if (strcmp(state, "WORKING") == 0) return &hakimi_pet_working;
+    if (strcmp(state, "WAITING") == 0 || strcmp(state, "ERROR") == 0) return &hakimi_pet_waiting;
+    if (strcmp(state, "DONE") == 0) return &hakimi_pet_done;
+    return &hakimi_pet_idle;
 }
 
 static void create_ui(void)
@@ -140,36 +156,29 @@ static void create_ui(void)
 
     lv_obj_t *rail_panel = lv_obj_create(root);
     lv_obj_set_pos(rail_panel, 0, 42); lv_obj_set_size(rail_panel, 138, 326); style_panel(rail_panel, rail, line, 0);
-    lv_obj_t *pet = make_label(rail_panel, "<  o  o  >\n    --", graphite, 18, 110, 80);
-    lv_obj_align(pet, LV_ALIGN_TOP_MID, 0, 28);
-    lv_obj_t *rail_status_title = make_label(rail_panel, "AGENT STATUS", muted, 14, 110, 22);
-    lv_obj_set_pos(rail_status_title, 12, 122);
-    lv_obj_t *rail_ready = make_label(rail_panel, "READY", graphite, 18, 115, 28);
-    lv_obj_set_pos(rail_ready, 12, 150);
+    g_pet_image = lv_image_create(rail_panel);
+    lv_image_set_src(g_pet_image, &hakimi_pet_idle);
+    lv_obj_set_pos(g_pet_image, 21, 8);
+    lv_obj_t *rail_status_title = make_label(rail_panel, "STATUS", muted, 14, 110, 22);
+    lv_obj_set_pos(rail_status_title, 12, 116);
+    g_rail_state_label = make_label(rail_panel, "IDLE", graphite, 18, 115, 30);
+    lv_obj_set_pos(g_rail_state_label, 12, 142);
     lv_obj_t *rail_signal = make_label(rail_panel, "-- SIGNAL --", muted, 14, 110, 22);
-    lv_obj_set_pos(rail_signal, 12, 198);
+    lv_obj_set_pos(rail_signal, 12, 194);
 
     lv_obj_t *chat = lv_obj_create(root);
     lv_obj_set_pos(chat, 138, 42); lv_obj_set_size(chat, UI_WIDTH - 138, 326); style_panel(chat, paper, line, 0);
-    make_label(chat, "SESSION / LIVE TRANSCRIPT", muted, 14, 310, 22);
     g_agent_bubble = lv_obj_create(chat);
-    lv_obj_set_pos(g_agent_bubble, 16, 45); lv_obj_set_size(g_agent_bubble, 442, 138); style_panel(g_agent_bubble, steel, line, 8);
-    make_label(g_agent_bubble, "AGENT  /  OUTPUT", muted, 14, 400, 22);
-    g_agent_message_label = make_label(g_agent_bubble, g_agent_message, graphite, 18, 410, 92);
-    lv_obj_set_pos(g_agent_message_label, 12, 36);
-    lv_obj_t *user_bubble = lv_obj_create(chat);
-    lv_obj_set_pos(user_bubble, 116, 198); lv_obj_set_size(user_bubble, 342, 72); style_panel(user_bubble, graphite, graphite, 8);
-    lv_obj_t *user_label = make_label(user_bubble, "VOICE INPUT / READY TO SEND", lv_color_hex(0xF5F3EE), 14, 315, 45);
-    lv_obj_set_pos(user_label, 12, 14);
+    lv_obj_set_pos(g_agent_bubble, 14, 12); lv_obj_set_size(g_agent_bubble, 474, 302); style_panel(g_agent_bubble, steel, line, 8);
+    // The output is the main thing the user reads.  There is deliberately no
+    // extra "AGENT / OUTPUT" caption or second input bubble competing for space.
+    g_agent_message_label = make_label(g_agent_bubble, g_agent_message, graphite, 18, 450, 276);
+    lv_obj_set_pos(g_agent_message_label, 12, 12);
 
     g_draft_box = lv_obj_create(root);
     lv_obj_set_pos(g_draft_box, 10, 372); lv_obj_set_size(g_draft_box, UI_WIDTH - 20, 60); style_panel(g_draft_box, lv_color_hex(0xFBFAF6), cyan, 8);
-    g_mic_label = make_label(g_draft_box, "MIC", cyan, 14, 46, 28);
-    lv_obj_set_pos(g_mic_label, 12, 15);
-    g_draft_status_label = make_label(g_draft_box, "MAC / DOUBAO DRAFT", muted, 14, 230, 20);
-    lv_obj_set_pos(g_draft_status_label, 65, 7);
-    g_draft_label = make_label(g_draft_box, "(empty)", graphite, 14, 475, 28);
-    lv_obj_set_pos(g_draft_label, 65, 27);
+    g_draft_label = make_label(g_draft_box, "|", graphite, 18, 592, 42);
+    lv_obj_set_pos(g_draft_label, 12, 9);
 
     lv_obj_t *footer = lv_obj_create(root);
     lv_obj_set_pos(footer, 0, 434); lv_obj_set_size(footer, UI_WIDTH, 46); style_panel(footer, paper, line, 0);
@@ -202,7 +211,18 @@ static void update_ui(void)
     bool voice = false;
     copy_state(state, sizeof(state), message, sizeof(message), draft, sizeof(draft), &cursor, &voice);
     lv_label_set_text(g_state_label, voice ? "LISTENING" : state);
+    lv_label_set_text(g_rail_state_label, voice ? "LISTEN" : state);
     lv_label_set_text(g_agent_message_label, message[0] ? message : "Ready for input.");
+    const lv_image_dsc_t *pet = pet_for_state(state);
+    static const lv_image_dsc_t *last_pet;
+    if (pet != last_pet) {
+        lv_image_set_src(g_pet_image, pet);
+        last_pet = pet;
+    }
+    const uint32_t frame_period = strcmp(state, "WORKING") == 0 ? 160 : 320;
+    const uint32_t bob_frame = (lv_tick_get() / frame_period) % 4;
+    const int bob_offset = bob_frame == 1 ? 1 : bob_frame == 3 ? -1 : 0;
+    lv_obj_set_y(g_pet_image, 8 + bob_offset);
     char visible_draft[sizeof(g_input_draft) + 2];
     size_t length = strlen(draft);
     size_t safe_cursor = cursor < 0 ? 0 : (size_t)cursor;
@@ -213,9 +233,7 @@ static void update_ui(void)
     memcpy(visible_draft + safe_cursor + 1, draft + safe_cursor, length - safe_cursor);
     visible_draft[length + 1] = '\0';
     lv_label_set_text(g_draft_label, visible_draft[0] == '|' && length == 0 ? "|" : visible_draft);
-    lv_label_set_text(g_draft_status_label, voice ? "MAC / DOUBAO LISTENING" : "MAC / DOUBAO DRAFT");
     lv_obj_set_style_border_color(g_draft_box, voice ? lv_color_hex(0xE8A126) : lv_color_hex(0x12B8D6), 0);
-    lv_obj_set_style_text_color(g_mic_label, voice ? lv_color_hex(0xE8A126) : lv_color_hex(0x12B8D6), 0);
 }
 
 static void display_task(void *arg)
