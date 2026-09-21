@@ -37,6 +37,7 @@ export type ComposerSnapshot = {
   focused?: boolean;
   text?: string;
   cursor?: number;
+  source?: 'mac-accessibility' | 'mac-ocr';
   detail?: string;
 };
 
@@ -92,13 +93,17 @@ export async function accessibilityTrusted(): Promise<boolean> {
 }
 
 export async function activateApp(appName: string): Promise<void> {
-  await execFileAsync('open', ['-a', appName], { timeout: 3000 });
+  const target = appName === 'Codex' ? 'ChatGPT' : appName;
+  await execFileAsync('open', ['-a', target], { timeout: 3000 });
 }
 
 export async function focusCodexWindow(appName = 'Codex'): Promise<{ focused: boolean; detail: string }> {
   if (process.platform !== 'darwin') return { focused: false, detail: '仅支持 macOS' };
   try {
-    await activateApp(appName);
+    // Current Codex is distributed inside ChatGPT.app. The native helper
+    // resolves both bundle names, and this explicit activation fallback makes
+    // the voice key work even when no standalone "Codex" app alias exists.
+    await activateApp(appName === 'Codex' ? 'ChatGPT' : appName);
     await new Promise((resolve) => setTimeout(resolve, 500));
     const helper = await runNativeHelper(['focus', appName]);
     if (helper) {
@@ -107,7 +112,8 @@ export async function focusCodexWindow(appName = 'Codex'): Promise<{ focused: bo
         detail: helper.detail || `${appName} 已置前并尝试聚焦输入框`,
       };
     }
-    await runAppleScript(`tell application "System Events" to tell process "${appName}" to set frontmost to true`);
+    const processName = appName === 'Codex' ? 'ChatGPT' : appName;
+    await runAppleScript(`tell application "System Events" to tell process "${processName}" to set frontmost to true`);
     return { focused: true, detail: `${appName} 已置前；未找到原生辅助功能适配器` };
   } catch (error) {
     return { focused: false, detail: error instanceof Error ? error.message : String(error) };

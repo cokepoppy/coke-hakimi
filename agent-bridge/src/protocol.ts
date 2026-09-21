@@ -65,7 +65,7 @@ export type InputDraft = {
   text: string;
   cursor: number;
   revision: number;
-  source: 'mac-accessibility' | 'unknown';
+  source: 'mac-accessibility' | 'mac-ocr' | 'unknown';
   status: InputDraftStatus;
   updatedAt: number;
   detail?: string;

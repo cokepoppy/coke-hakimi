@@ -59,11 +59,24 @@ await call(`window.hakimiBridge.send(${JSON.stringify({
     status: 'draft',
   },
 })})`);
-await new Promise((resolve) => setTimeout(resolve, 250));
-await call(`window.hakimiBridge.send(${JSON.stringify({ topic: 'display/query', payload: { source: 'automated-smoke' } })})`);
-await new Promise((resolve) => setTimeout(resolve, 250));
+let queryAck;
+for (let round = 0; round < 4 && !queryAck; round += 1) {
+  const beforeQuery = await call('window.hakimiBridge.getState()');
+  const beforeQueryTs = beforeQuery.lastDeviceEvent?.payload?.tsMs;
+  await call(`window.hakimiBridge.send(${JSON.stringify({ topic: 'display/query', payload: { source: 'automated-smoke' } })})`);
+  for (let attempt = 0; attempt < 12 && !queryAck; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const candidate = await call('window.hakimiBridge.getState()');
+    const event = candidate.lastDeviceEvent;
+    if (event?.topic === 'control/ack'
+        && event.payload?.for === 'display/query'
+        && event.payload?.tsMs !== beforeQueryTs
+        && event.payload?.display?.inputDraftBytes > 0) queryAck = event.payload;
+  }
+  if (!queryAck) await new Promise((resolve) => setTimeout(resolve, 100));
+}
 const state = await call('window.hakimiBridge.getState()');
-const ack = state.lastDeviceEvent?.topic === 'control/ack' ? state.lastDeviceEvent.payload : undefined;
+const ack = queryAck;
 const display = ack?.display;
 // The payloads above are synthetic assertions, not user content. Do not
 // leave the smoke-test draft visible after the test; normal app updates come

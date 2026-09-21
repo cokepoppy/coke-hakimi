@@ -26,6 +26,9 @@ Independent macOS Electron + TypeScript bridge for the custom ESP32-P4 Hakimi fi
 - Embeds four 96 px RGB565 pet frames for IDLE, WORKING, WAITING/ERROR, and
   DONE in `firmware/serial-audio/main/hakimi_pet_frames.c`; the source sprite
   sheet is kept at `firmware/serial-audio/assets/hakimi_pet_sprite_sheet.png`.
+- Uses a generated four-frame brick-laying sprite for the WORKING state from
+  `firmware/serial-audio/assets/hakimi_pet_working_sprite.png`, converted to
+  `firmware/serial-audio/main/hakimi_pet_working_anim.c`.
 - Uses the 4 MB single-app partition in `firmware/serial-audio/partitions.csv`
   so the complete font and pet frames remain bootable.
 - Ships an earlier V3-only native USB UAC proof under `firmware/uac/` for fallback/reference.
@@ -76,6 +79,25 @@ Waveshare P4 pin map):
 ```
 
 The app needs macOS Accessibility permission for window focus and synthetic key events. The default adapter intentionally treats log formats as unstable and keeps the adapter boundary separate from the renderer.
+
+The composer watcher first reads the focused agent input through macOS
+Accessibility. The current Codex desktop build is packaged as `ChatGPT.app`
+and its Web composer is not exposed as an AX text field, so the bridge uses a
+read-only Vision OCR fallback for the lower composer line. It never writes to
+the composer or clipboard, and an unavailable snapshot does not erase the last
+valid draft shown on the device.
+
+Automated checks:
+
+```bash
+npm run composer:smoke
+npm run device:smoke
+```
+
+`device:smoke` verifies UTF-8 message bytes, cursor position, label bytes,
+software-rendered ink pixels, and LCD flushes through the serial display cache.
+The MIPI panel has no screenshot readback, so final pixel appearance still
+needs a physical photo of the device.
 
 ## Confirmed hardware family
 

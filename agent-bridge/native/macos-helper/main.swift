@@ -4,6 +4,7 @@ import ApplicationServices
 import CoreGraphics
 import AVFoundation
 import AudioToolbox
+import Vision
 
 // Small, dependency-free macOS primitive used by the Electron bridge. The
 // helper deliberately exposes small focus, keyboard, and CoreAudio operations.
@@ -31,13 +32,21 @@ func runningApplication(named query: String) -> NSRunningApplication? {
     let candidates = NSWorkspace.shared.runningApplications.filter { app in
         let name = (app.localizedName ?? "").lowercased()
         let bundle = (app.bundleIdentifier ?? "").lowercased()
+        if needle == "codex" {
+            // The current macOS Codex desktop app is packaged as ChatGPT.app
+            // (com.openai.chatgpt), while older releases used com.openai.codex.
+            return name == needle || name.contains(needle) || bundle.contains(needle)
+                || name == "chatgpt" || bundle == "com.openai.chatgpt"
+        }
         return name == needle || name.contains(needle) || bundle.contains(needle)
     }
     // The Codex desktop app currently identifies itself as com.openai.codex
     // while its Chromium renderer children also contain "Codex" in the name.
     // Prefer the regular application process so AX points at the real window.
     if needle == "codex", let main = candidates.first(where: {
-        $0.bundleIdentifier?.lowercased() == "com.openai.codex" && $0.activationPolicy == .regular
+        let bundle = $0.bundleIdentifier?.lowercased()
+        return (bundle == "com.openai.codex" || bundle == "com.openai.chatgpt")
+            && $0.activationPolicy == .regular
     }) { return main }
     return candidates.first(where: { $0.activationPolicy == .regular }) ?? candidates.first
 }
@@ -108,7 +117,7 @@ func focusedWindow(for app: NSRunningApplication) -> AXUIElement? {
         kAXFocusedWindowAttribute as CFString,
         &focusedWindowValue
     ) == .success, let focusedWindowValue else { return nil }
-    return focusedWindowValue as! AXUIElement
+    return (focusedWindowValue as! AXUIElement)
 }
 
 func focusedComposer(in window: AXUIElement) -> AXUIElement? {
@@ -141,6 +150,7 @@ func composerSnapshot(_ appName: String) -> [String: Any] {
                 "detail": "无法读取 \(appName) 的焦点窗口"]
     }
     guard let composer = focusedComposer(in: window) else {
+        if let ocr = ocrComposerSnapshot(app: app, appName: appName) { return ocr }
         return ["ok": false, "supported": false, "focused": false, "text": "", "cursor": 0,
                 "detail": "没有找到 \(appName) 的文本输入框"]
     }
@@ -148,7 +158,129 @@ func composerSnapshot(_ appName: String) -> [String: Any] {
     let text = String(rawText.prefix(4000))
     let cursor = min(axCursor(composer) ?? text.count, text.count)
     return ["ok": true, "supported": true, "focused": true, "text": text, "cursor": cursor,
-            "detail": "已读取 \(appName) 输入框"]
+            "source": "mac-accessibility", "detail": "已读取 \(appName) 输入框"]
+}
+
+func frontWindowID(for pid: pid_t) -> CGWindowID? {
+    guard let rawWindows = CGWindowListCopyWindowInfo(
+        [.optionOnScreenOnly, .excludeDesktopElements],
+        kCGNullWindowID
+    ) as? [[String: Any]] else { return nil }
+    let candidates = rawWindows.compactMap { info -> (CGWindowID, CGFloat)? in
+        guard let ownerPID = info[kCGWindowOwnerPID as String] as? Int,
+              ownerPID == Int(pid),
+              let layer = info[kCGWindowLayer as String] as? Int,
+              layer == 0,
+              let number = info[kCGWindowNumber as String] as? NSNumber,
+              let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+              let rect = CGRect(dictionaryRepresentation: bounds),
+              rect.width > 400, rect.height > 250 else { return nil }
+        return (CGWindowID(number.uint32Value), rect.width * rect.height)
+    }
+    return candidates.max(by: { $0.1 < $1.1 })?.0
+}
+
+func windowBounds(for windowID: CGWindowID) -> CGRect? {
+    guard let rawWindows = CGWindowListCopyWindowInfo(
+        [.optionOnScreenOnly, .excludeDesktopElements],
+        kCGNullWindowID
+    ) as? [[String: Any]] else { return nil }
+    for info in rawWindows {
+        guard let number = info[kCGWindowNumber as String] as? NSNumber,
+              CGWindowID(number.uint32Value) == windowID,
+              let bounds = info[kCGWindowBounds as String] as? NSDictionary else { continue }
+        return CGRect(dictionaryRepresentation: bounds)
+    }
+    return nil
+}
+
+func screenImage() -> CGImage? {
+    let path = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("hakimi-ocr-\(UUID().uuidString).png")
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+    process.arguments = ["-x", "-m", path.path]
+    do {
+        try process.run()
+        let deadline = Date().addingTimeInterval(2.0)
+        while process.isRunning && Date() < deadline { usleep(50_000) }
+        if process.isRunning {
+            process.terminate()
+            process.waitUntilExit()
+            try? FileManager.default.removeItem(at: path)
+            return nil
+        }
+        guard process.terminationStatus == 0,
+              let nsImage = NSImage(contentsOf: path),
+              let image = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            try? FileManager.default.removeItem(at: path)
+            return nil
+        }
+        try? FileManager.default.removeItem(at: path)
+        return image
+    } catch {
+        try? FileManager.default.removeItem(at: path)
+        return nil
+    }
+}
+
+func ocrComposerText(for app: NSRunningApplication) -> String? {
+    guard let windowID = frontWindowID(for: app.processIdentifier),
+          let bounds = windowBounds(for: windowID),
+          let fullScreen = screenImage() else { return nil }
+    let screenRect = CGRect(origin: .zero, size: CGSize(width: fullScreen.width, height: fullScreen.height))
+    let logicalScreen = NSScreen.main?.frame.size ?? CGSize(
+        width: CGFloat(CGDisplayPixelsWide(CGMainDisplayID())) / 2,
+        height: CGFloat(CGDisplayPixelsHigh(CGMainDisplayID())) / 2
+    )
+    let scaleX = CGFloat(fullScreen.width) / max(logicalScreen.width, 1)
+    let scaleY = CGFloat(fullScreen.height) / max(logicalScreen.height, 1)
+    // CGWindow bounds use a top-left screen coordinate system and the full
+    // screenshot is Retina; scale only to confirm the active window is visible.
+    let scaledBounds = CGRect(
+        x: bounds.origin.x * scaleX,
+        y: CGFloat(fullScreen.height) - (bounds.origin.y + bounds.height) * scaleY,
+        width: bounds.width * scaleX,
+        height: bounds.height * scaleY
+    )
+    guard !scaledBounds.intersection(screenRect).isNull else { return nil }
+
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .fast
+    request.usesLanguageCorrection = false
+    request.recognitionLanguages = ["zh-Hans", "en-US"]
+    // The composer input is the upper strip of the bottom-center card. Keep
+    // controls, model selector, and surrounding conversation out of OCR.
+    // ChatGPT's composer stays in the lower-center band of the active window;
+    // keep the ROI on the input baseline rather than the controls below it.
+    request.regionOfInterest = CGRect(x: 0.23, y: 0.15, width: 0.55, height: 0.04)
+    let handler = VNImageRequestHandler(cgImage: fullScreen, options: [:])
+    do { try handler.perform([request]) } catch { return nil }
+    let lines = (request.results ?? [])
+        .sorted { $0.boundingBox.minY > $1.boundingBox.minY }
+        .compactMap { $0.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+    guard !lines.isEmpty else { return "" }
+    let text = lines.joined(separator: "\n")
+    let folded = text.lowercased().replacingOccurrences(of: " ", with: "")
+    if folded == "doanything" || folded == "oanything" || folded == "askanything" || folded == "输入消息" {
+        return ""
+    }
+    return text
+}
+
+func ocrComposerSnapshot(app: NSRunningApplication, appName: String) -> [String: Any]? {
+    guard let text = ocrComposerText(for: app) else { return nil }
+    let bounded = String(text.prefix(4000))
+    return [
+        "ok": true,
+        "supported": true,
+        "focused": true,
+        "text": bounded,
+        "cursor": bounded.count,
+        "source": "mac-ocr",
+        "detail": "AX 未暴露文本控件，已用只读 OCR 读取 \(appName) 输入框",
+    ]
 }
 
 func watchComposer(_ appName: String) -> Never {
@@ -160,30 +292,36 @@ func watchComposer(_ appName: String) -> Never {
             String(describing: snapshot["focused"] ?? false),
             String(describing: snapshot["text"] ?? ""),
             String(describing: snapshot["cursor"] ?? 0),
+            String(describing: snapshot["source"] ?? ""),
             String(describing: snapshot["detail"] ?? ""),
         ].joined(separator: "|")
         if signature != previousSignature {
             emit(snapshot)
             previousSignature = signature
         }
-        usleep(150_000)
+        let source = String(describing: snapshot["source"] ?? "")
+        usleep(source == "mac-ocr" ? 350_000 : 150_000)
     }
 }
 
-func clickWindowComposerFallback(_ window: AXUIElement) -> Bool {
+func clickWindowComposerFallback(_ window: AXUIElement, app: NSRunningApplication) -> Bool {
     var positionValue: CFTypeRef?
     var sizeValue: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionValue) == .success,
-          AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeValue) == .success,
-          let positionValue,
-          let sizeValue else { return false }
     var position = CGPoint.zero
     var size = CGSize.zero
-    guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &position),
-          AXValueGetValue(sizeValue as! AXValue, .cgSize, &size),
-          size.width > 200,
-          size.height > 160,
-          let source = CGEventSource(stateID: .hidSystemState) else { return false }
+    let axHasFrame = AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionValue) == .success
+        && AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeValue) == .success
+        && positionValue != nil
+        && sizeValue != nil
+        && AXValueGetValue(positionValue as! AXValue, .cgPoint, &position)
+        && AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
+    if !axHasFrame || size.width <= 200 || size.height <= 160 {
+        guard let windowID = frontWindowID(for: app.processIdentifier),
+              let bounds = windowBounds(for: windowID) else { return false }
+        position = bounds.origin
+        size = bounds.size
+    }
+    guard let source = CGEventSource(stateID: .hidSystemState) else { return false }
     // Codex/ChatGPT's composer is at the bottom center of the main window.
     // This is only a fallback for Electron web contents that do not expose
     // their internal AX tree to the host process.
@@ -214,7 +352,7 @@ func focusApplication(_ appName: String) {
     }
     let focusedWindowElement = focusedWindow as! AXUIElement
     guard let composer = findComposer(in: focusedWindowElement) else {
-        if clickWindowComposerFallback(focusedWindowElement) {
+        if clickWindowComposerFallback(focusedWindowElement, app: app) {
             emit(["ok": true, "focused": true, "detail": "\(appName) 已置前，并通过窗口底部备用点击聚焦输入框"])
         } else {
             emit(["ok": true, "focused": false, "detail": "\(appName) 已置前，但没有找到可聚焦的文本输入框"])

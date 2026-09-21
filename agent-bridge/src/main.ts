@@ -229,7 +229,7 @@ function applyComposerSnapshot(next: ComposerSnapshot): void {
     text,
     cursor,
     revision: inputDraftRevision,
-    source: next.supported ? 'mac-accessibility' : 'unknown',
+    source: next.supported ? (next.source || 'mac-accessibility') : 'unknown',
     status,
     updatedAt: Date.now(),
     detail: next.detail,

@@ -24,6 +24,7 @@ extern const lv_font_t hakimi_font_cjk_16;
 extern const lv_font_t hakimi_font_cjk_18;
 extern const lv_image_dsc_t hakimi_pet_idle;
 extern const lv_image_dsc_t hakimi_pet_working;
+extern const lv_image_dsc_t hakimi_pet_working_frames[4];
 extern const lv_image_dsc_t hakimi_pet_waiting;
 extern const lv_image_dsc_t hakimi_pet_done;
 
@@ -50,7 +51,6 @@ static volatile size_t g_last_agent_label_bytes;
 static volatile size_t g_last_draft_label_bytes;
 static volatile uint32_t g_flush_count;
 
-static lv_obj_t *g_state_label;
 static lv_obj_t *g_rail_state_label;
 static lv_obj_t *g_pet_image;
 static lv_obj_t *g_agent_message_label;
@@ -137,10 +137,10 @@ static void lvgl_flush_cb(lv_display_t *display, const lv_area_t *area, uint8_t 
                 const bool dark_ink = red < 150 && green < 155 && blue < 155;
                 // This provides a software rendering proof because this MIPI
                 // panel has no readback path for screenshots.
-                if (logical_x >= 164 && logical_x < 614 && logical_y >= 66 && logical_y < 341 && dark_ink) {
+                if (logical_x >= 150 && logical_x < 622 && logical_y >= 58 && logical_y < 352 && dark_ink) {
                     agent_ink_pixels += 1;
                 }
-                if (logical_x >= 22 && logical_x < 610 && logical_y >= 381 && logical_y < 423 && pixel != draft_background && dark_ink) {
+                if (logical_x >= 22 && logical_x < 618 && logical_y >= 371 && logical_y < 419 && pixel != draft_background && dark_ink) {
                     draft_ink_pixels += 1;
                 }
             }
@@ -155,11 +155,16 @@ static void lvgl_flush_cb(lv_display_t *display, const lv_area_t *area, uint8_t 
 
 static void style_panel(lv_obj_t *object, lv_color_t color, lv_color_t border, int radius)
 {
+    // lv_obj_create is scrollable by default. These are fixed-size LCD panels,
+    // so an accidental one-pixel child overflow must never create a scrollbar.
+    lv_obj_set_scrollable(object, false);
+    lv_obj_set_scrollbar_mode(object, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_bg_color(object, color, 0);
     lv_obj_set_style_bg_opa(object, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(object, border, 0);
     lv_obj_set_style_border_width(object, 1, 0);
     lv_obj_set_style_radius(object, radius, 0);
+    lv_obj_set_style_pad_all(object, 0, 0);
 }
 
 static lv_obj_t *make_label(lv_obj_t *parent, const char *text, lv_color_t color, int size, int width, int height)
@@ -198,14 +203,10 @@ static void update_status_visuals(const char *state, bool voice)
         // display, while avoiding an extra animation object in the LVGL tree.
         static const lv_opa_t breathing[] = {96, 128, 168, 220, LV_OPA_COVER, 220, 168, 128};
         const uint32_t phase = (lv_tick_get() / 120) % (sizeof(breathing) / sizeof(breathing[0]));
-        lv_obj_set_style_text_color(g_state_label, lv_color_hex(0x12B8D6), 0);
         lv_obj_set_style_text_color(g_rail_state_label, lv_color_hex(0x12B8D6), 0);
-        lv_obj_set_style_text_opa(g_state_label, breathing[phase], 0);
         lv_obj_set_style_text_opa(g_rail_state_label, breathing[phase], 0);
     } else {
-        lv_obj_set_style_text_color(g_state_label, lv_color_hex(0x12B8D6), 0);
         lv_obj_set_style_text_color(g_rail_state_label, lv_color_hex(0x303638), 0);
-        lv_obj_set_style_text_opa(g_state_label, LV_OPA_COVER, 0);
         lv_obj_set_style_text_opa(g_rail_state_label, LV_OPA_COVER, 0);
     }
 }
@@ -213,20 +214,21 @@ static void update_status_visuals(const char *state, bool voice)
 static void update_pet_animation(const char *state)
 {
     if (strcmp(state, "WORKING") == 0) {
-        // Working is intentionally energetic: the larger pet and the
-        // eight-step jump/lean cycle make it visibly different from DONE.
-        static const int8_t x[] = {10, 8, 7, 10, 14, 12, 8, 10};
-        static const int8_t y[] = {8, 3, 0, 4, 10, 6, 1, 4};
-        static const uint16_t scale[] = {272, 288, 300, 288, 272, 294, 300, 286};
-        const uint32_t frame = (lv_tick_get() / 110) % (sizeof(x) / sizeof(x[0]));
-        lv_obj_set_pos(g_pet_image, x[frame], y[frame]);
-        lv_obj_set_style_transform_scale(g_pet_image, scale[frame], 0);
+        // Working uses real generated sprite frames, not a scale/breathing
+        // trick. Each frame shows the cat reaching, lifting, carrying, and
+        // placing a brick, while the 96x96 canvas stays centered in the rail.
+        const uint32_t frame = (lv_tick_get() / 180) % 4;
+        lv_image_set_src(g_pet_image, &hakimi_pet_working_frames[frame]);
     } else {
-        // IDLE/WAITING/DONE are calm and static. DONE therefore cannot be
-        // mistaken for the active working animation.
-        lv_obj_set_pos(g_pet_image, 21, 8);
-        lv_obj_set_style_transform_scale(g_pet_image, 256, 0);
+        const lv_image_dsc_t *pet = pet_for_state(state);
+        static const lv_image_dsc_t *last_pet;
+        if (pet != last_pet) {
+            lv_image_set_src(g_pet_image, pet);
+            last_pet = pet;
+        }
     }
+    /* 136 px rail - 96 px sprite = 40 px; keep the sprite centered. */
+    lv_obj_set_pos(g_pet_image, 20, 8);
 }
 
 static void create_ui(void)
@@ -240,29 +242,29 @@ static void create_ui(void)
     const lv_color_t steel = lv_color_hex(0xE1E3DE);
     lv_obj_t *root = lv_screen_active();
     lv_obj_remove_style_all(root);
+    lv_obj_set_scrollable(root, false);
+    lv_obj_set_scrollbar_mode(root, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_bg_color(root, paper, 0);
     lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
 
     lv_obj_t *header = lv_obj_create(root);
     lv_obj_set_pos(header, 0, 0); lv_obj_set_size(header, UI_WIDTH, 42); style_panel(header, paper, line, 0);
     make_label(header, "HAKIMI  /  CODEX", graphite, 14, 220, 30);
-    g_state_label = make_label(header, "IDLE", cyan, 14, 110, 30);
-    lv_obj_align(g_state_label, LV_ALIGN_TOP_RIGHT, -20, 8);
 
     lv_obj_t *rail_panel = lv_obj_create(root);
-    lv_obj_set_pos(rail_panel, 0, 42); lv_obj_set_size(rail_panel, 138, 326); style_panel(rail_panel, rail, line, 0);
+    lv_obj_set_pos(rail_panel, 0, 42); lv_obj_set_size(rail_panel, 136, 326); style_panel(rail_panel, rail, line, 0);
     g_pet_image = lv_image_create(rail_panel);
     lv_image_set_src(g_pet_image, &hakimi_pet_idle);
-    lv_obj_set_pos(g_pet_image, 21, 8);
+    lv_obj_set_pos(g_pet_image, 20, 8);
     lv_obj_t *rail_status_title = make_label(rail_panel, "STATUS", muted, 14, 110, 22);
     lv_obj_set_pos(rail_status_title, 12, 116);
     g_rail_state_label = make_label(rail_panel, "IDLE", graphite, 18, 92, 24);
     lv_obj_set_pos(g_rail_state_label, 12, 142);
 
     lv_obj_t *chat = lv_obj_create(root);
-    lv_obj_set_pos(chat, 138, 42); lv_obj_set_size(chat, UI_WIDTH - 138, 326); style_panel(chat, paper, line, 0);
+    lv_obj_set_pos(chat, 136, 42); lv_obj_set_size(chat, 492, 326); style_panel(chat, paper, line, 0);
     g_agent_bubble = lv_obj_create(chat);
-    lv_obj_set_pos(g_agent_bubble, 14, 12); lv_obj_set_size(g_agent_bubble, 474, 302); style_panel(g_agent_bubble, steel, line, 8);
+    lv_obj_set_pos(g_agent_bubble, 10, 10); lv_obj_set_size(g_agent_bubble, 472, 306); style_panel(g_agent_bubble, steel, line, 8);
     // The output is the main thing the user reads.  There is deliberately no
     // extra "AGENT / OUTPUT" caption or second input bubble competing for space.
     // LVGL's transformed labels work for short status text, but its wrapped
@@ -271,30 +273,30 @@ static void create_ui(void)
     // and reliable first; the card now has enough area for readable 18 px text.
     // Leave a deliberate right margin inside the card.  This keeps long
     // CJK/ASCII runs inside the rounded panel instead of ending at its edge.
-    g_agent_message_label = make_label(g_agent_bubble, g_agent_message, graphite, 18, 400, 276);
+    g_agent_message_label = make_label(g_agent_bubble, g_agent_message, graphite, 18, 448, 282);
     // The status rail still uses the legacy transform for its compact label,
     // but the multiline output must stay at native scale on the MIPI panel.
     lv_obj_set_style_transform_scale(g_agent_message_label, 256, 0);
     lv_obj_set_pos(g_agent_message_label, 12, 12);
 
     g_draft_box = lv_obj_create(root);
-    lv_obj_set_pos(g_draft_box, 10, 372); lv_obj_set_size(g_draft_box, UI_WIDTH - 20, 60); style_panel(g_draft_box, lv_color_hex(0xFBFAF6), cyan, 8);
+    lv_obj_set_pos(g_draft_box, 10, 368); lv_obj_set_size(g_draft_box, UI_WIDTH - 20, 56); style_panel(g_draft_box, lv_color_hex(0xFBFAF6), cyan, 8);
     // Keep the single-line draft at the proven native CJK size. The output
     // card benefits from scaling, but a transformed one-line label can be
     // clipped by LVGL before it reaches the full-screen flush buffer.
-    g_draft_label = make_label(g_draft_box, "|", graphite, 14, 592, 42);
-    lv_obj_set_pos(g_draft_label, 12, 9);
+    g_draft_label = make_label(g_draft_box, "|", graphite, 14, 592, 40);
+    lv_obj_set_pos(g_draft_label, 12, 7);
 
     lv_obj_t *footer = lv_obj_create(root);
-    lv_obj_set_pos(footer, 0, 434); lv_obj_set_size(footer, UI_WIDTH, 46); style_panel(footer, paper, line, 0);
+    lv_obj_set_pos(footer, 0, 424); lv_obj_set_size(footer, UI_WIDTH, 56); style_panel(footer, paper, line, 0);
     // Keep explicit handles instead of relying on LVGL child indexes. All
     // three captions now share the same baseline on the physical panel.
     lv_obj_t *footer_first = make_label(footer, "SW1  VOICE / HOLD", graphite, 14, 190, 28);
     lv_obj_t *footer_second = make_label(footer, "SW2  BACKSPACE", graphite, 14, 190, 28);
     lv_obj_t *footer_third = make_label(footer, "SW3  ENTER / SEND", graphite, 14, 190, 28);
-    lv_obj_set_pos(footer_first, 0, 8);
-    lv_obj_set_pos(footer_second, 220, 8);
-    lv_obj_set_pos(footer_third, 440, 8);
+    lv_obj_set_pos(footer_first, 0, 4);
+    lv_obj_set_pos(footer_second, 220, 4);
+    lv_obj_set_pos(footer_third, 440, 4);
 }
 
 static void copy_state(char *state, size_t state_size, char *message, size_t message_size, char *draft, size_t draft_size, int *cursor, bool *voice)
@@ -316,18 +318,11 @@ static void update_ui(void)
     int cursor = 0;
     bool voice = false;
     copy_state(state, sizeof(state), message, sizeof(message), draft, sizeof(draft), &cursor, &voice);
-    lv_label_set_text(g_state_label, voice ? "LISTENING" : state);
     lv_label_set_text(g_rail_state_label, voice ? "LISTEN" : state);
     update_status_visuals(state, voice);
     const char *visible_message = message[0] ? message : "Ready for input.";
     lv_label_set_text(g_agent_message_label, visible_message);
     g_last_agent_label_bytes = strlen(visible_message);
-    const lv_image_dsc_t *pet = pet_for_state(state);
-    static const lv_image_dsc_t *last_pet;
-    if (pet != last_pet) {
-        lv_image_set_src(g_pet_image, pet);
-        last_pet = pet;
-    }
     update_pet_animation(state);
     char visible_draft[sizeof(g_input_draft) + 2];
     size_t length = strlen(draft);
