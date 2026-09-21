@@ -8,6 +8,7 @@
     "build": "node build.mjs",
     "start": "npm run build && electron .",
     "typecheck": "tsc --noEmit",
+    "device:smoke": "node scripts/device-smoke-test.mjs",
     "dist:mac": "npm run build && electron-builder --mac --arm64"
   },
   "dependencies": {

@@ -124,10 +124,29 @@ static void emit_input_levels(void)
 
 static void emit_control_ack(const char *topic, const char *detail)
 {
+    size_t agent_message_bytes = 0;
+    size_t input_draft_bytes = 0;
+    int input_cursor = 0;
+    size_t agent_label_bytes = 0;
+    size_t draft_label_bytes = 0;
+    size_t agent_ink_pixels = 0;
+    size_t draft_ink_pixels = 0;
+    uint32_t flush_count = 0;
+    hakimi_display_get_debug(&agent_message_bytes, &input_draft_bytes, &input_cursor,
+                             &agent_label_bytes, &draft_label_bytes,
+                             &agent_ink_pixels, &draft_ink_pixels, &flush_count);
     emit_line(
-        "{\"topic\":\"control/ack\",\"payload\":{\"ok\":true,\"for\":\"%s\",\"detail\":\"%s\",\"tsMs\":%lld}}\n",
+        "{\"topic\":\"control/ack\",\"payload\":{\"ok\":true,\"for\":\"%s\",\"detail\":\"%s\",\"display\":{\"agentMessageBytes\":%lu,\"inputDraftBytes\":%lu,\"inputCursor\":%d,\"agentLabelBytes\":%lu,\"draftLabelBytes\":%lu,\"agentInkPixels\":%lu,\"draftInkPixels\":%lu,\"flushCount\":%lu},\"tsMs\":%lld}}\n",
         topic,
         detail,
+        (unsigned long)agent_message_bytes,
+        (unsigned long)input_draft_bytes,
+        input_cursor,
+        (unsigned long)agent_label_bytes,
+        (unsigned long)draft_label_bytes,
+        (unsigned long)agent_ink_pixels,
+        (unsigned long)draft_ink_pixels,
+        (unsigned long)flush_count,
         (long long)(esp_timer_get_time() / 1000)
     );
 }
@@ -263,6 +282,10 @@ static void control_task(void *arg)
         copy_json_string(line, "topic", topic, sizeof(topic));
         if (strcmp(topic, "input/debug") == 0) {
             emit_input_levels();
+            continue;
+        }
+        if (strcmp(topic, "display/query") == 0) {
+            emit_control_ack(topic, "display cache queried");
             continue;
         }
         if (strcmp(topic, "speech/text") == 0) {

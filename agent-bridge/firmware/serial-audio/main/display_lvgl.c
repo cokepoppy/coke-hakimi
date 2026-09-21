@@ -42,6 +42,11 @@ static char g_agent_state[16] = "IDLE";
 static char g_agent_message[512] = "Ready for input.";
 static char g_input_draft[512] = "";
 static int g_input_cursor;
+static volatile size_t g_last_agent_ink_pixels;
+static volatile size_t g_last_draft_ink_pixels;
+static volatile size_t g_last_agent_label_bytes;
+static volatile size_t g_last_draft_label_bytes;
+static volatile uint32_t g_flush_count;
 
 static lv_obj_t *g_state_label;
 static lv_obj_t *g_rail_state_label;
@@ -86,6 +91,10 @@ static void lvgl_flush_cb(lv_display_t *display, const lv_area_t *area, uint8_t 
     (void)area;
     const uint16_t *source = (const uint16_t *)px_map;
     static uint16_t row[LCD_WIDTH];
+    size_t agent_ink_pixels = 0;
+    size_t draft_ink_pixels = 0;
+    const uint16_t agent_background = (uint16_t)(((0xE1 >> 3) << 11) | ((0xE3 >> 2) << 5) | (0xDE >> 3));
+    const uint16_t draft_background = (uint16_t)(((0xFB >> 3) << 11) | ((0xFA >> 2) << 5) | (0xF6 >> 3));
     for (int panel_y = 0; panel_y < LCD_HEIGHT; panel_y += LCD_ROW_CHUNK) {
         const int height = panel_y + LCD_ROW_CHUNK > LCD_HEIGHT ? LCD_HEIGHT - panel_y : LCD_ROW_CHUNK;
         for (int row_offset = 0; row_offset < height; row_offset += 1) {
@@ -93,11 +102,24 @@ static void lvgl_flush_cb(lv_display_t *display, const lv_area_t *area, uint8_t 
             for (int physical_x = 0; physical_x < LCD_WIDTH; physical_x += 1) {
                 const int logical_x = physical_y;
                 const int logical_y = UI_HEIGHT - 1 - physical_x;
-                row[physical_x] = source[logical_y * UI_WIDTH + logical_x];
+                const uint16_t pixel = source[logical_y * UI_WIDTH + logical_x];
+                row[physical_x] = pixel;
+                // Count non-background pixels in the two text interiors. This
+                // provides a software rendering proof because this MIPI panel
+                // has no readback path for screenshots.
+                if (logical_x >= 164 && logical_x < 614 && logical_y >= 66 && logical_y < 341 && pixel != agent_background) {
+                    agent_ink_pixels += 1;
+                }
+                if (logical_x >= 22 && logical_x < 610 && logical_y >= 381 && logical_y < 423 && pixel != draft_background) {
+                    draft_ink_pixels += 1;
+                }
             }
             ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(g_panel, 0, physical_y, LCD_WIDTH, physical_y + 1, row));
         }
     }
+    g_last_agent_ink_pixels = agent_ink_pixels;
+    g_last_draft_ink_pixels = draft_ink_pixels;
+    g_flush_count += 1;
     lv_display_flush_ready(display);
 }
 
@@ -122,7 +144,11 @@ static lv_obj_t *make_label(lv_obj_t *parent, const char *text, lv_color_t color
     // Keep the complete 14 px CJK font (which is proven on this board), but
     // scale only the high-priority text so the firmware does not need another
     // multi-megabyte full CJK font.  LVGL's transform scale uses 256 = 100%.
+    // The width/height arguments for a large label are its pre-scale box;
+    // callers size that box so the transformed result remains inside its card.
     lv_obj_set_style_transform_scale(label, size >= 18 ? 320 : 256, 0);
+    lv_obj_set_style_transform_pivot_x(label, 0, 0);
+    lv_obj_set_style_transform_pivot_y(label, 0, 0);
     return label;
 }
 
@@ -161,7 +187,7 @@ static void create_ui(void)
     lv_obj_set_pos(g_pet_image, 21, 8);
     lv_obj_t *rail_status_title = make_label(rail_panel, "STATUS", muted, 14, 110, 22);
     lv_obj_set_pos(rail_status_title, 12, 116);
-    g_rail_state_label = make_label(rail_panel, "IDLE", graphite, 18, 115, 30);
+    g_rail_state_label = make_label(rail_panel, "IDLE", graphite, 18, 92, 24);
     lv_obj_set_pos(g_rail_state_label, 12, 142);
     lv_obj_t *rail_signal = make_label(rail_panel, "-- SIGNAL --", muted, 14, 110, 22);
     lv_obj_set_pos(rail_signal, 12, 194);
@@ -172,12 +198,18 @@ static void create_ui(void)
     lv_obj_set_pos(g_agent_bubble, 14, 12); lv_obj_set_size(g_agent_bubble, 474, 302); style_panel(g_agent_bubble, steel, line, 8);
     // The output is the main thing the user reads.  There is deliberately no
     // extra "AGENT / OUTPUT" caption or second input bubble competing for space.
-    g_agent_message_label = make_label(g_agent_bubble, g_agent_message, graphite, 18, 450, 276);
+    // At 125% scale these become 450 x 275 px, fitting within the 474 x 302
+    // output card.  Giving LVGL a 450 x 276 pre-scale box made the transformed
+    // object larger than its parent and it could be clipped as a whole.
+    g_agent_message_label = make_label(g_agent_bubble, g_agent_message, graphite, 18, 360, 220);
     lv_obj_set_pos(g_agent_message_label, 12, 12);
 
     g_draft_box = lv_obj_create(root);
     lv_obj_set_pos(g_draft_box, 10, 372); lv_obj_set_size(g_draft_box, UI_WIDTH - 20, 60); style_panel(g_draft_box, lv_color_hex(0xFBFAF6), cyan, 8);
-    g_draft_label = make_label(g_draft_box, "|", graphite, 18, 592, 42);
+    // Keep the single-line draft at the proven native CJK size. The output
+    // card benefits from scaling, but a transformed one-line label can be
+    // clipped by LVGL before it reaches the full-screen flush buffer.
+    g_draft_label = make_label(g_draft_box, "|", graphite, 14, 592, 42);
     lv_obj_set_pos(g_draft_label, 12, 9);
 
     lv_obj_t *footer = lv_obj_create(root);
@@ -212,7 +244,9 @@ static void update_ui(void)
     copy_state(state, sizeof(state), message, sizeof(message), draft, sizeof(draft), &cursor, &voice);
     lv_label_set_text(g_state_label, voice ? "LISTENING" : state);
     lv_label_set_text(g_rail_state_label, voice ? "LISTEN" : state);
-    lv_label_set_text(g_agent_message_label, message[0] ? message : "Ready for input.");
+    const char *visible_message = message[0] ? message : "Ready for input.";
+    lv_label_set_text(g_agent_message_label, visible_message);
+    g_last_agent_label_bytes = strlen(visible_message);
     const lv_image_dsc_t *pet = pet_for_state(state);
     static const lv_image_dsc_t *last_pet;
     if (pet != last_pet) {
@@ -233,6 +267,7 @@ static void update_ui(void)
     memcpy(visible_draft + safe_cursor + 1, draft + safe_cursor, length - safe_cursor);
     visible_draft[length + 1] = '\0';
     lv_label_set_text(g_draft_label, visible_draft[0] == '|' && length == 0 ? "|" : visible_draft);
+    g_last_draft_label_bytes = strlen(visible_draft);
     lv_obj_set_style_border_color(g_draft_box, voice ? lv_color_hex(0xE8A126) : lv_color_hex(0x12B8D6), 0);
 }
 
@@ -332,5 +367,32 @@ void hakimi_display_set_input_draft(const char *text, int cursor)
     xSemaphoreTake(g_state_mutex, portMAX_DELAY);
     snprintf(g_input_draft, sizeof(g_input_draft), "%s", text);
     g_input_cursor = cursor;
+    xSemaphoreGive(g_state_mutex);
+}
+
+void hakimi_display_get_debug(size_t *agent_message_bytes, size_t *input_draft_bytes, int *input_cursor,
+                              size_t *agent_label_bytes, size_t *draft_label_bytes,
+                              size_t *agent_ink_pixels, size_t *draft_ink_pixels, uint32_t *flush_count)
+{
+    if (!g_state_mutex) {
+        if (agent_message_bytes) *agent_message_bytes = 0;
+        if (input_draft_bytes) *input_draft_bytes = 0;
+        if (input_cursor) *input_cursor = 0;
+        if (agent_label_bytes) *agent_label_bytes = 0;
+        if (draft_label_bytes) *draft_label_bytes = 0;
+        if (agent_ink_pixels) *agent_ink_pixels = 0;
+        if (draft_ink_pixels) *draft_ink_pixels = 0;
+        if (flush_count) *flush_count = 0;
+        return;
+    }
+    xSemaphoreTake(g_state_mutex, portMAX_DELAY);
+    if (agent_message_bytes) *agent_message_bytes = strlen(g_agent_message);
+    if (input_draft_bytes) *input_draft_bytes = strlen(g_input_draft);
+    if (input_cursor) *input_cursor = g_input_cursor;
+    if (agent_label_bytes) *agent_label_bytes = g_last_agent_label_bytes;
+    if (draft_label_bytes) *draft_label_bytes = g_last_draft_label_bytes;
+    if (agent_ink_pixels) *agent_ink_pixels = g_last_agent_ink_pixels;
+    if (draft_ink_pixels) *draft_ink_pixels = g_last_draft_ink_pixels;
+    if (flush_count) *flush_count = g_flush_count;
     xSemaphoreGive(g_state_mutex);
 }
