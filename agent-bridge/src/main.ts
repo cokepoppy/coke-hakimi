@@ -197,6 +197,25 @@ function sendInputDraftToDevice(draft: InputDraft | undefined): void {
   });
 }
 
+function clearStaleDraftOnDeviceConnect(): void {
+  // A freshly started bridge has no Accessibility snapshot yet. Clear only
+  // in that explicit reconnect case so an old automated-smoke string cannot
+  // survive on the device; periodic "unavailable" polling still preserves a
+  // valid draft already shown on screen.
+  if (inputDraft) return;
+  serial.trySend({
+    topic: 'ui/input-draft',
+    payload: {
+      text: '',
+      cursor: 0,
+      revision: 0,
+      status: 'ready',
+      source: 'bridge-connect-reset',
+      updatedAt: Date.now(),
+    },
+  });
+}
+
 function applyComposerSnapshot(next: ComposerSnapshot): void {
   composerSnapshot = next;
   const status: InputDraft['status'] = next.supported ? (voiceKeyDown ? 'composing' : 'ready') : 'unavailable';
@@ -417,6 +436,7 @@ function registerIpc(): void {
   });
   ipcMain.handle('device:connect', async (_event, path: string) => {
     const port = await serial.connect(path);
+    clearStaleDraftOnDeviceConnect();
     await publishState();
     return port;
   });

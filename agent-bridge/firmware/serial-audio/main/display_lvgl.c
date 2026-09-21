@@ -190,6 +190,45 @@ static const lv_image_dsc_t *pet_for_state(const char *state)
     return &hakimi_pet_idle;
 }
 
+static void update_status_visuals(const char *state, bool voice)
+{
+    const bool working = !voice && strcmp(state, "WORKING") == 0;
+    if (working) {
+        // A stepped opacity curve reads as a breathing light on the small
+        // display, while avoiding an extra animation object in the LVGL tree.
+        static const lv_opa_t breathing[] = {96, 128, 168, 220, LV_OPA_COVER, 220, 168, 128};
+        const uint32_t phase = (lv_tick_get() / 120) % (sizeof(breathing) / sizeof(breathing[0]));
+        lv_obj_set_style_text_color(g_state_label, lv_color_hex(0x12B8D6), 0);
+        lv_obj_set_style_text_color(g_rail_state_label, lv_color_hex(0x12B8D6), 0);
+        lv_obj_set_style_text_opa(g_state_label, breathing[phase], 0);
+        lv_obj_set_style_text_opa(g_rail_state_label, breathing[phase], 0);
+    } else {
+        lv_obj_set_style_text_color(g_state_label, lv_color_hex(0x12B8D6), 0);
+        lv_obj_set_style_text_color(g_rail_state_label, lv_color_hex(0x303638), 0);
+        lv_obj_set_style_text_opa(g_state_label, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_opa(g_rail_state_label, LV_OPA_COVER, 0);
+    }
+}
+
+static void update_pet_animation(const char *state)
+{
+    if (strcmp(state, "WORKING") == 0) {
+        // Working is intentionally energetic: the larger pet and the
+        // eight-step jump/lean cycle make it visibly different from DONE.
+        static const int8_t x[] = {10, 8, 7, 10, 14, 12, 8, 10};
+        static const int8_t y[] = {8, 3, 0, 4, 10, 6, 1, 4};
+        static const uint16_t scale[] = {272, 288, 300, 288, 272, 294, 300, 286};
+        const uint32_t frame = (lv_tick_get() / 110) % (sizeof(x) / sizeof(x[0]));
+        lv_obj_set_pos(g_pet_image, x[frame], y[frame]);
+        lv_obj_set_style_transform_scale(g_pet_image, scale[frame], 0);
+    } else {
+        // IDLE/WAITING/DONE are calm and static. DONE therefore cannot be
+        // mistaken for the active working animation.
+        lv_obj_set_pos(g_pet_image, 21, 8);
+        lv_obj_set_style_transform_scale(g_pet_image, 256, 0);
+    }
+}
+
 static void create_ui(void)
 {
     const lv_color_t paper = lv_color_hex(0xF5F3EE);
@@ -219,8 +258,6 @@ static void create_ui(void)
     lv_obj_set_pos(rail_status_title, 12, 116);
     g_rail_state_label = make_label(rail_panel, "IDLE", graphite, 18, 92, 24);
     lv_obj_set_pos(g_rail_state_label, 12, 142);
-    lv_obj_t *rail_signal = make_label(rail_panel, "-- SIGNAL --", muted, 14, 110, 22);
-    lv_obj_set_pos(rail_signal, 12, 194);
 
     lv_obj_t *chat = lv_obj_create(root);
     lv_obj_set_pos(chat, 138, 42); lv_obj_set_size(chat, UI_WIDTH - 138, 326); style_panel(chat, paper, line, 0);
@@ -250,12 +287,13 @@ static void create_ui(void)
 
     lv_obj_t *footer = lv_obj_create(root);
     lv_obj_set_pos(footer, 0, 434); lv_obj_set_size(footer, UI_WIDTH, 46); style_panel(footer, paper, line, 0);
-    make_label(footer, "SW1  VOICE / HOLD", graphite, 14, 190, 28);
-    make_label(footer, "SW2  BACKSPACE", graphite, 14, 190, 28);
-    make_label(footer, "SW3  ENTER / SEND", graphite, 14, 190, 28);
-    lv_obj_t *footer_second = lv_obj_get_child(footer, 1);
+    // Keep explicit handles instead of relying on LVGL child indexes. All
+    // three captions now share the same baseline on the physical panel.
+    lv_obj_t *footer_first = make_label(footer, "SW1  VOICE / HOLD", graphite, 14, 190, 28);
+    lv_obj_t *footer_second = make_label(footer, "SW2  BACKSPACE", graphite, 14, 190, 28);
+    lv_obj_t *footer_third = make_label(footer, "SW3  ENTER / SEND", graphite, 14, 190, 28);
+    lv_obj_set_pos(footer_first, 0, 8);
     lv_obj_set_pos(footer_second, 220, 8);
-    lv_obj_t *footer_third = lv_obj_get_child(footer, 2);
     lv_obj_set_pos(footer_third, 440, 8);
 }
 
@@ -280,6 +318,7 @@ static void update_ui(void)
     copy_state(state, sizeof(state), message, sizeof(message), draft, sizeof(draft), &cursor, &voice);
     lv_label_set_text(g_state_label, voice ? "LISTENING" : state);
     lv_label_set_text(g_rail_state_label, voice ? "LISTEN" : state);
+    update_status_visuals(state, voice);
     const char *visible_message = message[0] ? message : "Ready for input.";
     lv_label_set_text(g_agent_message_label, visible_message);
     g_last_agent_label_bytes = strlen(visible_message);
@@ -289,10 +328,7 @@ static void update_ui(void)
         lv_image_set_src(g_pet_image, pet);
         last_pet = pet;
     }
-    const uint32_t frame_period = strcmp(state, "WORKING") == 0 ? 160 : 320;
-    const uint32_t bob_frame = (lv_tick_get() / frame_period) % 4;
-    const int bob_offset = bob_frame == 1 ? 1 : bob_frame == 3 ? -1 : 0;
-    lv_obj_set_y(g_pet_image, 8 + bob_offset);
+    update_pet_animation(state);
     char visible_draft[sizeof(g_input_draft) + 2];
     size_t length = strlen(draft);
     size_t safe_cursor = cursor < 0 ? 0 : (size_t)cursor;

@@ -65,6 +65,20 @@ await new Promise((resolve) => setTimeout(resolve, 250));
 const state = await call('window.hakimiBridge.getState()');
 const ack = state.lastDeviceEvent?.topic === 'control/ack' ? state.lastDeviceEvent.payload : undefined;
 const display = ack?.display;
+// The payloads above are synthetic assertions, not user content. Do not
+// leave the smoke-test draft visible after the test; normal app updates come
+// from the real macOS Accessibility composer watcher.
+await call(`window.hakimiBridge.send(${JSON.stringify({
+  topic: 'ui/input-draft',
+  payload: {
+    text: '',
+    cursor: 0,
+    revision: 0,
+    source: 'automated-smoke-reset',
+    status: 'ready',
+  },
+})})`);
+await new Promise((resolve) => setTimeout(resolve, 120));
 console.log(JSON.stringify({
   connected: state.connected,
   port: state.port?.path,
