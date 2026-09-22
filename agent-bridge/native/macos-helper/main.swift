@@ -445,10 +445,28 @@ func sendKey(_ name: String, _ phase: String) {
             virtualKey: code,
             keyDown: current == "down"
         ) else { fail("无法创建键盘事件：\(name)") }
-        if name == "fn" { event.flags.insert(.maskSecondaryFn) }
+        if name == "fn" {
+            // The modifier flag describes the state *after* this event. An Fn
+            // key-up carrying maskSecondaryFn leaves macOS/Doubao believing
+            // that Fn is still held until another pointer or keyboard event
+            // repairs the modifier state.
+            event.flags = current == "down" ? [.maskSecondaryFn] : []
+        }
         event.post(tap: .cghidEventTap)
     }
     emit(["ok": true, "detail": "\(name):\(phase)"])
+}
+
+func emitModifierState() {
+    let flags = CGEventSource.flagsState(.combinedSessionState)
+    emit([
+        "ok": true,
+        "fn": flags.contains(.maskSecondaryFn),
+        "command": flags.contains(.maskCommand),
+        "option": flags.contains(.maskAlternate),
+        "control": flags.contains(.maskControl),
+        "shift": flags.contains(.maskShift),
+    ])
 }
 
 func sendCommandTab() {
@@ -676,6 +694,8 @@ case "watch-composer":
 case "key":
     guard args.count >= 3 else { fail("key 需要按键名和 down/up/tap") }
     sendKey(args[1], args[2])
+case "modifier-state":
+    emitModifierState()
 case "command-tab":
     sendCommandTab()
 case "audio-sink":

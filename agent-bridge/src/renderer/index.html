@@ -52,7 +52,7 @@
             <button id="voice-auto-on">启用免键盘语音</button>
             <button id="voice-auto-off">停用免键盘语音</button>
           </div>
-          <div class="callout test-steps"><strong>免键盘语音验收</strong><p>先说一小段唤醒候选（例如“小哈小哈”），停顿后再说命令。桥接端会把第一段作为唤醒候选丢弃，检测到第二段人声后自动聚焦当前 Agent、按下 Fn；连续静音约 900ms 后自动松开 Fn，让豆包提交文字。当前是 VAD 后备模式，不是严格的中文唤醒词识别。</p></div>
+          <div class="callout test-steps"><strong>免键盘语音验收</strong><p>说“小龙小龙”唤醒后，桥接端会自动聚焦当前 Agent 并按下 Fn；开始说命令后，连续静音约 1.8 秒才会松开 Fn，让豆包提交文字。单次长语音最长 90 秒。</p></div>
         </div>
 
         <div class="panel control-panel">

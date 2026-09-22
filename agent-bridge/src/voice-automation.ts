@@ -31,11 +31,14 @@ export const DEFAULT_VOICE_AUTOMATION_CONFIG: VoiceAutomationConfig = {
   // Mac microphone. Once WakeNet has already fired, use a lower threshold
   // for the command segment; the hardware wake word remains the gate.
   wakeWordCommandRmsThreshold: 120,
-  endSilenceMs: 900,
+  // Natural dictation contains short pauses between clauses. Require a clear
+  // pause before submitting so a thinking pause does not cut the user off.
+  endSilenceMs: 1_800,
   minWakeSpeechMs: 250,
   maxWakeSpeechMs: 2_500,
-  commandTimeoutMs: 4_000,
-  maxCaptureMs: 20_000,
+  commandTimeoutMs: 8_000,
+  // Coding prompts are often much longer than a short voice command.
+  maxCaptureMs: 90_000,
   cooldownMs: 600,
   preRollMs: 300,
 };

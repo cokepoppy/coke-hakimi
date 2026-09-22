@@ -350,7 +350,9 @@ async function handleKeyboardlessVoiceEvent(event: VoiceAutomationEvent): Promis
     phase: event.type,
     detail: event.type === 'wake-detected'
       ? `VAD 唤醒候选，片段 ${event.durationMs}ms`
-      : event.type,
+      : event.type === 'command-end'
+        ? `command-end:${event.reason}`
+        : event.type,
   });
 
   if (event.type === 'wake-detected') {
