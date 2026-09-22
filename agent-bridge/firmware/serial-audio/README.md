@@ -30,6 +30,12 @@ command segment. If the model partition is unavailable, the bridge reports
 The firmware configures the ES8311 microphone PGA at 36 dB. The bridge uses a
 separate lower post-wake speech threshold for this board because its ES8311
 PCM amplitude is lower than a Mac microphone; WakeNet remains the wake gate.
+For this single-microphone enclosure, the firmware also sets the official
+WakeNet detection threshold to `0.56` after model creation. The bundled model
+defaults to about `0.624-0.628`; this modest reduction improves the chance of
+hearing 小龙小龙 at normal speaking volume while avoiding the much higher
+false-trigger risk of an aggressively low threshold. The boot log records both
+the default and configured values so the setting is verifiable after flashing.
 
 The project is V3-only. It uses Espressif's official `esp_codec_dev` ES8311
 driver and the Waveshare P4 pin map (I2C 7/8, I2S 13/12/10/9/11). Build with

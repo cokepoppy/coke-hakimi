@@ -32,6 +32,11 @@
 #define FRAME_BYTES (FRAME_SAMPLES * CHANNELS * (BITS_PER_SAMPLE / 8))
 #define BASE64_BYTES (((FRAME_BYTES + 2) / 3) * 4)
 
+// The bundled official 小龙小龙 model defaults to roughly 0.624-0.628.
+// Lower this modestly for the assembled single-mic enclosure; going much
+// lower would make unrelated speech more likely to trigger the wake gate.
+#define WAKE_DETECTION_THRESHOLD 0.56f
+
 #define I2C_PORT I2C_NUM_0
 #define I2C_SDA GPIO_NUM_7
 #define I2C_SCL GPIO_NUM_8
@@ -117,6 +122,18 @@ static bool wake_detector_init(wake_detector_t *detector)
     if (!detector->model_data) {
         ESP_LOGW(TAG, "WakeNet model creation failed for %s", model_name);
         return false;
+    }
+    const float default_threshold = detector->iface->get_det_threshold(detector->model_data, 1);
+    const int threshold_result = detector->iface->set_det_threshold(
+        detector->model_data,
+        WAKE_DETECTION_THRESHOLD,
+        1
+    );
+    const float configured_threshold = detector->iface->get_det_threshold(detector->model_data, 1);
+    if (threshold_result != 1) {
+        ESP_LOGW(TAG, "WakeNet threshold update failed: default=%.3f requested=%.3f", default_threshold, WAKE_DETECTION_THRESHOLD);
+    } else {
+        ESP_LOGI(TAG, "WakeNet threshold configured: default=%.3f configured=%.3f", default_threshold, configured_threshold);
     }
     detector->chunk_samples = (size_t)detector->iface->get_samp_chunksize(detector->model_data);
     detector->chunk = calloc(detector->chunk_samples, sizeof(int16_t));
