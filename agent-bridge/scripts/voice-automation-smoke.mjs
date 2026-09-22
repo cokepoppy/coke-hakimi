@@ -26,6 +26,7 @@ const config = {
   maxCaptureMs: 800,
   cooldownMs: 80,
   preRollMs: 60,
+  wakeWordCommandRmsThreshold: 120,
 };
 const session = new KeyboardlessVoiceAutomation(config);
 const frameMs = 20;
@@ -58,9 +59,11 @@ const afterTimeout = session.getPhase();
 const wakeWordSession = new KeyboardlessVoiceAutomation(config);
 wakeWordSession.setMode('wake-word');
 wakeWordSession.enable(0);
-const ignoredVoice = wakeWordSession.feed(speech, 0);
+const lowLevelSpeech = Buffer.alloc(640);
+for (let offset = 0; offset < lowLevelSpeech.length; offset += 2) lowLevelSpeech.writeInt16LE(180, offset);
+const ignoredVoice = wakeWordSession.feed(lowLevelSpeech, 0);
 const wakeEvent = wakeWordSession.triggerWake(20);
-const capturedAfterWake = wakeWordSession.feed(speech, 20);
+const capturedAfterWake = wakeWordSession.feed(lowLevelSpeech, 20);
 
 const hardwareWakePass = !ignoredVoice.events.some((event) => event.type === 'wake-detected')
   && wakeEvent?.type === 'wake-detected'

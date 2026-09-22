@@ -515,7 +515,11 @@ static esp_err_t setup_microphone(esp_codec_dev_handle_t *microphone)
         .bits_per_sample = BITS_PER_SAMPLE,
         .mclk_multiple = 384,
     };
-    ESP_RETURN_ON_ERROR(esp_codec_dev_set_in_gain(*microphone, 24.0), TAG, "mic gain failed");
+    // The assembled Hakimi microphone is quiet at the previous 24 dB setting
+    // (the bridge observed roughly 40-80 RMS at idle). Use the ES8311's 36 dB
+    // PGA setting so WakeNet and the post-wake command VAD receive a usable
+    // signal without relying on Mac-side amplification.
+    ESP_RETURN_ON_ERROR(esp_codec_dev_set_in_gain(*microphone, 36.0), TAG, "mic gain failed");
     return esp_codec_dev_open(*microphone, &sample);
 }
 

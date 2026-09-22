@@ -14,6 +14,7 @@ export type VoiceAutomationEvent =
 export type VoiceAutomationConfig = {
   sampleRate: number;
   speechRmsThreshold: number;
+  wakeWordCommandRmsThreshold: number;
   endSilenceMs: number;
   minWakeSpeechMs: number;
   maxWakeSpeechMs: number;
@@ -26,6 +27,10 @@ export type VoiceAutomationConfig = {
 export const DEFAULT_VOICE_AUTOMATION_CONFIG: VoiceAutomationConfig = {
   sampleRate: 16_000,
   speechRmsThreshold: 900,
+  // The ES8311 path on this board has a much smaller PCM amplitude than a
+  // Mac microphone. Once WakeNet has already fired, use a lower threshold
+  // for the command segment; the hardware wake word remains the gate.
+  wakeWordCommandRmsThreshold: 120,
   endSilenceMs: 900,
   minWakeSpeechMs: 250,
   maxWakeSpeechMs: 2_500,
@@ -120,7 +125,11 @@ export class KeyboardlessVoiceAutomation {
   feed(pcm: Buffer, nowMs: number): VoiceAutomationFeed {
     const frameMs = Math.max(1, (pcm.length / 2 / this.config.sampleRate) * 1000);
     const rms = pcmRms(pcm);
-    const speech = rms >= this.config.speechRmsThreshold;
+    const commandPhase = this.phase === 'waiting_command' || this.phase === 'capturing';
+    const speechThreshold = this.mode === 'wake-word' && commandPhase
+      ? this.config.wakeWordCommandRmsThreshold
+      : this.config.speechRmsThreshold;
+    const speech = rms >= speechThreshold;
     const events: VoiceAutomationEvent[] = [];
 
     if (this.phase === 'off') {

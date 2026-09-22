@@ -27,6 +27,10 @@ focuses the active agent window, presses macOS Fn, and forwards only the next
 command segment. If the model partition is unavailable, the bridge reports
 `wakeWord:false` and uses the existing VAD fallback.
 
+The firmware configures the ES8311 microphone PGA at 36 dB. The bridge uses a
+separate lower post-wake speech threshold for this board because its ES8311
+PCM amplitude is lower than a Mac microphone; WakeNet remains the wake gate.
+
 The project is V3-only. It uses Espressif's official `esp_codec_dev` ES8311
 driver and the Waveshare P4 pin map (I2C 7/8, I2S 13/12/10/9/11). Build with
 the installed PlatformIO ESP-IDF 5.5.4 / P4 toolchain:
