@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('hakimiBridge', {
   commandTab: (): Promise<{ ok: boolean; detail: string }> => ipcRenderer.invoke('mac:command-tab'),
   startAudioTest: (): Promise<{ ok: boolean; detail: string }> => ipcRenderer.invoke('audio:test-start'),
   stopAudioTest: (): Promise<{ ok: boolean; detail: string }> => ipcRenderer.invoke('audio:test-stop'),
+  setKeyboardlessVoice: (enabled: boolean): Promise<{ ok: boolean; detail: string }> => ipcRenderer.invoke('voice:auto', enabled),
   openDocs: (): Promise<void> => ipcRenderer.invoke('app:open-docs'),
   onState: (callback: (state: BridgeState) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: BridgeState) => callback(state);

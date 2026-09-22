@@ -34,12 +34,18 @@ Independent macOS Electron + TypeScript bridge for the custom ESP32-P4 Hakimi fi
   so the complete font and pet frames remain bootable.
 - Ships an earlier V3-only native USB UAC proof under `firmware/uac/` for fallback/reference.
 - Ships the active V3-only serial microphone proof under `firmware/serial-audio/`.
+- Provides a keyboardless voice-assistant state machine with a VAD wake
+  fallback, automatic Fn down/up endpointing, and deterministic `voice:smoke`
+  coverage. The exact Chinese wake phrase remains a replaceable offline
+  wake-word detector boundary.
 
 The accepted bring-up path keeps the top Type-C selector on `UART / CH343`.
 The serial-audio image reads the Waveshare ES8311 microphone at 16 kHz and sends
-20 ms PCM frames as JSONL. Electron forwards them to the macOS `BlackHole 2ch`
-virtual microphone only while voice PTT or the explicit audio test is active;
-Electron does not run ASR, so Doubao remains responsible for speech-to-text.
+20 ms PCM frames as JSONL. Electron forwards command PCM to the macOS
+`BlackHole 2ch` virtual microphone after the keyboardless voice state machine
+detects a command segment, or while voice PTT/the explicit audio test is
+active. Electron does not run command ASR, so Doubao remains responsible for
+speech-to-text.
 
 The current physical controls are:
 
@@ -48,6 +54,13 @@ The current physical controls are:
 - `SW1` short press: no submit action; use the long press for voice PTT.
 - `SW2` short press: Backspace.
 - `SW3` short press: Enter/send the focused agent prompt.
+
+The keyboardless route is enabled by default for the bridge. In its current
+safe fallback mode, the first short speech segment is treated as a wake
+candidate and discarded; after the screen says `请说话`, the next speech
+segment is sent to Doubao and stable silence releases Fn. Set
+`HAKIMI_AUTO_VOICE=0` for display/composer regression tests without automatic
+voice activation.
 
 Command+Tab remains available as a Mac bridge test and future combination-key
 action; it is not assigned to a dedicated physical button.
@@ -93,6 +106,7 @@ Automated checks:
 ```bash
 npm run composer:smoke
 npm run device:smoke
+npm run voice:smoke
 ```
 
 `device:smoke` verifies UTF-8 message bytes, cursor position, label bytes,

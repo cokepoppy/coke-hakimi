@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "device:smoke": "node scripts/device-smoke-test.mjs",
     "composer:smoke": "node scripts/composer-sync-smoke.mjs",
+    "voice:smoke": "node scripts/voice-automation-smoke.mjs",
     "dist:mac": "npm run build && electron-builder --mac --arm64"
   },
   "dependencies": {

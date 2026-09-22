@@ -41,6 +41,13 @@ export type AudioMeter = {
   packetAt?: number;
 };
 
+export type VoiceAutomationState = {
+  enabled: boolean;
+  phase: 'off' | 'waiting_wake' | 'waiting_command' | 'capturing' | 'cooldown';
+  mode: 'vad-fallback' | 'wake-word-pending';
+  lastEvent?: string;
+};
+
 export type ChipIdentity = {
   chip: 'ESP32-P4' | 'unknown';
   revisionText: string;
@@ -99,6 +106,7 @@ export type BridgeState = {
   audioLastPacketAt?: number;
   audioLastRms: number;
   audioLastPeak: number;
+  voiceAutomation: VoiceAutomationState;
   accessibilityTrusted: boolean;
   codexRunning: boolean;
   snapshots: AgentSnapshot[];

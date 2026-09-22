@@ -16,6 +16,7 @@ declare global {
       commandTab(): Promise<{ ok: boolean; detail: string }>;
       startAudioTest(): Promise<{ ok: boolean; detail: string }>;
       stopAudioTest(): Promise<{ ok: boolean; detail: string }>;
+      setKeyboardlessVoice(enabled: boolean): Promise<{ ok: boolean; detail: string }>;
       openDocs(): Promise<void>;
       onState(callback: (state: BridgeState) => void): () => void;
       onInputDraft(callback: (draft: InputDraft) => void): () => void;
@@ -41,6 +42,7 @@ const audioReceiveStatus = $('#audio-receive-status');
 const audioMeterValues = $('#audio-meter-values');
 const audioMeterFill = $('#audio-meter-fill') as HTMLDivElement;
 const audioMeterMeta = $('#audio-meter-meta');
+const voiceStatus = $('#voice-status');
 const a11yStatus = $('#a11y-status');
 const result = $('#result');
 const inputDraftValue = $('#input-draft-value');
@@ -66,6 +68,10 @@ function render(state: BridgeState): void {
   const blackHole = state.audioInputs.find((item) => /blackhole/i.test(item.name));
   audioStatus.textContent = state.audioForwarding ? `正在转发到 ${blackHole?.name || 'BlackHole 2ch'}` : state.audioDeviceHint;
   audioStatus.className = `status-chip ${blackHole ? 'online' : 'pending'}`;
+  voiceStatus.textContent = state.voiceAutomation.enabled
+    ? `免键盘语音：${state.voiceAutomation.phase}`
+    : '免键盘语音：已停用';
+  voiceStatus.className = `status-chip ${state.voiceAutomation.enabled ? 'online' : 'pending'}`;
   renderAudioMeter({
     received: state.audioFramesReceived > 0,
     rms: state.audioLastRms,
@@ -166,6 +172,16 @@ $('#audio-test-start').addEventListener('click', async () => {
 });
 $('#audio-test-stop').addEventListener('click', async () => {
   const value = await window.hakimiBridge.stopAudioTest();
+  log(value.detail);
+  result.textContent = value.detail;
+});
+$('#voice-auto-on').addEventListener('click', async () => {
+  const value = await window.hakimiBridge.setKeyboardlessVoice(true);
+  log(value.detail);
+  result.textContent = value.detail;
+});
+$('#voice-auto-off').addEventListener('click', async () => {
+  const value = await window.hakimiBridge.setKeyboardlessVoice(false);
   log(value.detail);
   result.textContent = value.detail;
 });

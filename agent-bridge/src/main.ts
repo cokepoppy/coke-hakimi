@@ -17,6 +17,10 @@ import { AgentRegistry } from './agent-adapter';
 import { SerialAudioSink } from './audio';
 import { identifyP4Chip } from './firmware';
 import {
+  KeyboardlessVoiceAutomation,
+  type VoiceAutomationEvent,
+} from './voice-automation';
+import {
   encodeMessage,
   parseMessage,
   type AudioMeter,
@@ -117,6 +121,12 @@ let lastMessage: DeviceMessage | undefined;
 let lastError: string | undefined;
 let voiceKeyDown = false;
 let audioMonitor = false;
+let keyboardlessVoiceEnabled = process.env.HAKIMI_AUTO_VOICE !== '0';
+const keyboardlessVoice = new KeyboardlessVoiceAutomation();
+if (keyboardlessVoiceEnabled) keyboardlessVoice.enable();
+let keyboardlessVoicePending = false;
+let keyboardlessFocusPromise: ReturnType<typeof focusCodexWindow> | undefined;
+let keyboardlessLastEvent: string | undefined;
 let lastDeviceAgentKey = '';
 let audioInputsCache: Awaited<ReturnType<typeof listAudioInputs>> = [];
 let audioInputsCachedAt = 0;
@@ -156,13 +166,19 @@ async function state(): Promise<BridgeState> {
     audioDeviceHint: hasBlackHole
       ? `${sinkStats.deviceName} 已被 macOS 识别；点击音频测试即可转发串口麦克风`
       : '未发现 BlackHole 2ch；请安装后再点击音频测试',
-    audioForwarding: voiceKeyDown || audioMonitor,
+    audioForwarding: voiceKeyDown || audioMonitor || keyboardlessVoicePending,
     audioFramesReceived,
     audioFramesForwarded,
     audioFramesDropped,
     audioLastPacketAt,
     audioLastRms,
     audioLastPeak,
+    voiceAutomation: {
+      enabled: keyboardlessVoiceEnabled,
+      phase: keyboardlessVoice.getPhase(),
+      mode: 'vad-fallback',
+      lastEvent: keyboardlessLastEvent,
+    },
     accessibilityTrusted: await accessibilityTrusted(),
     codexRunning: snapshots.some((item) => item.agentId === 'codex' && item.state !== 'idle'),
     snapshots,
@@ -280,8 +296,8 @@ function gesture(payload: Record<string, unknown>): string {
   return String(payload.gesture || payload.phase || '').toLowerCase();
 }
 
-async function beginVoiceInput(): Promise<void> {
-  const focus = await focusCodexWindow('Codex');
+async function beginVoiceInput(focusPromise?: ReturnType<typeof focusCodexWindow>): Promise<void> {
+  const focus = await (focusPromise || focusCodexWindow('Codex'));
   if (!focus.focused) lastError = focus.detail;
   if (voiceKeyDown) return;
   const key = await postKey('fn', 'down');
@@ -289,6 +305,78 @@ async function beginVoiceInput(): Promise<void> {
   refreshComposerStatus();
   broadcast('bridge-action', { type: 'voice', phase: 'start', detail: `${focus.detail}；${key.detail}` });
   await publishState();
+}
+
+function sendVoiceStatus(body: string, status: 'listening' | 'working' | 'done' | 'waiting_user'): void {
+  serial.trySend({
+    topic: 'speech/text',
+    payload: {
+      sessionId: 'keyboardless-voice',
+      title: 'HAKIMI VOICE',
+      body,
+      status,
+      statusText: status,
+      source: 'keyboardless-voice-automation',
+    },
+  });
+}
+
+async function handleKeyboardlessVoiceEvent(event: VoiceAutomationEvent): Promise<void> {
+  keyboardlessLastEvent = event.type;
+  broadcast('bridge-action', {
+    type: 'voice-automation',
+    phase: event.type,
+    detail: event.type === 'wake-detected'
+      ? `VAD 唤醒候选，片段 ${event.durationMs}ms`
+      : event.type,
+  });
+
+  if (event.type === 'wake-detected') {
+    // Warm up the target window while the user is pausing after the wake
+    // phrase. The command itself is not forwarded until command-start.
+    keyboardlessFocusPromise = focusCodexWindow('Codex');
+    sendVoiceStatus('请说话', 'waiting_user');
+    await publishState();
+    return;
+  }
+  if (event.type === 'command-start') {
+    await beginVoiceInput(keyboardlessFocusPromise);
+    sendVoiceStatus('正在听取', 'working');
+    await publishState();
+    return;
+  }
+  if (event.type === 'command-end') {
+    await endVoiceInput();
+    keyboardlessVoicePending = false;
+    keyboardlessFocusPromise = undefined;
+    sendVoiceStatus('语音已提交', 'done');
+    await publishState();
+    return;
+  }
+  if (event.type === 'command-timeout') {
+    keyboardlessFocusPromise = undefined;
+    sendVoiceStatus('等待唤醒', 'listening');
+    await publishState();
+  }
+}
+
+async function setKeyboardlessVoice(enabled: boolean): Promise<{ ok: boolean; detail: string }> {
+  keyboardlessVoiceEnabled = enabled;
+  keyboardlessVoicePending = false;
+  keyboardlessFocusPromise = undefined;
+  if (enabled) {
+    keyboardlessVoice.enable();
+    const detail = '已启用免键盘语音：等待 VAD 唤醒候选';
+    broadcast('bridge-action', { type: 'voice-automation', phase: 'enabled', detail });
+    await publishState();
+    return { ok: true, detail };
+  }
+  keyboardlessVoice.disable();
+  await endVoiceInput();
+  const detail = '已停用免键盘语音';
+  broadcast('bridge-action', { type: 'voice-automation', phase: 'disabled', detail });
+  await publishState();
+  return { ok: true, detail };
 }
 
 async function endVoiceInput(): Promise<void> {
@@ -301,7 +389,7 @@ async function endVoiceInput(): Promise<void> {
 }
 
 function shouldForwardAudio(): boolean {
-  return voiceKeyDown || audioMonitor;
+  return voiceKeyDown || audioMonitor || keyboardlessVoicePending;
 }
 
 function publishAudioMeter(): void {
@@ -374,7 +462,16 @@ function handleAudioPcm(message: DeviceMessage): void {
   audioLastRms = sampleCount ? Math.sqrt(sumSquares / sampleCount) : 0;
   audioLastPeak = peak;
   publishAudioMeter();
-  if (!shouldForwardAudio()) return;
+  const automationFeed = keyboardlessVoiceEnabled
+    ? keyboardlessVoice.feed(pcm, Date.now())
+    : undefined;
+  if (automationFeed) {
+    for (const event of automationFeed.events) {
+      if (event.type === 'command-start') keyboardlessVoicePending = true;
+      void handleKeyboardlessVoiceEvent(event);
+    }
+  }
+  if (!shouldForwardAudio() && !automationFeed?.forward) return;
   void audioSink.start().then(() => {
     if (!shouldForwardAudio()) return;
     if (audioSink.write(pcm)) audioFramesForwarded += 1;
@@ -460,6 +557,7 @@ function registerIpc(): void {
   ipcMain.handle('mac:command-tab', () => commandTab());
   ipcMain.handle('audio:test-start', () => startAudioMonitor());
   ipcMain.handle('audio:test-stop', () => stopAudioMonitor());
+  ipcMain.handle('voice:auto', (_event, enabled: boolean) => setKeyboardlessVoice(Boolean(enabled)));
   ipcMain.handle('app:open-docs', () => shell.openExternal('https://github.com/YizhengWw/HachimoDock'));
 }
 

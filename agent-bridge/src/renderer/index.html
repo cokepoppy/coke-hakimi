@@ -30,6 +30,7 @@
           <div class="status-grid">
             <div><span class="muted">音频路径</span><strong id="audio-status" class="status-chip pending">串口 PCM → BlackHole</strong></div>
             <div><span class="muted">macOS 权限</span><strong id="a11y-status" class="status-chip pending">辅助功能：检测中</strong></div>
+            <div><span class="muted">免键盘语音</span><strong id="voice-status" class="status-chip pending">初始化中</strong></div>
           </div>
           <div class="audio-head"><span class="muted">macOS 音频输入清单（只读）</span><button id="refresh-audio">刷新音频</button></div>
           <div id="audio-inputs" class="audio-inputs">正在检测…</div>
@@ -48,8 +49,10 @@
           <div class="control-grid audio-test-grid">
             <button id="audio-test-start" class="primary">开始音频测试</button>
             <button id="audio-test-stop">停止音频测试</button>
+            <button id="voice-auto-on">启用免键盘语音</button>
+            <button id="voice-auto-off">停用免键盘语音</button>
           </div>
-          <div class="callout test-steps"><strong>豆包文字验收</strong><p>1. 点击“唤起并聚焦 Codex”；2. 点击“开始音频测试”；3. 按住哈基米的语音键说“测试一二三”，松开；4. 看上面的电平条持续变化，并看 Codex 输入框是否出现“测试一二三”。电平有变化但没有文字，说明硬件链路正常，问题在豆包是否被 Fn 激活或输入焦点。</p></div>
+          <div class="callout test-steps"><strong>免键盘语音验收</strong><p>先说一小段唤醒候选（例如“小哈小哈”），停顿后再说命令。桥接端会把第一段作为唤醒候选丢弃，检测到第二段人声后自动聚焦当前 Agent、按下 Fn；连续静音约 900ms 后自动松开 Fn，让豆包提交文字。当前是 VAD 后备模式，不是严格的中文唤醒词识别。</p></div>
         </div>
 
         <div class="panel control-panel">
