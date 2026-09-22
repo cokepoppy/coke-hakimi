@@ -653,6 +653,25 @@ function createWindow(): void {
   windowRef.loadFile(join(__dirname, 'index.html'));
 }
 
+async function autoConnectHakimi(): Promise<void> {
+  const devices = await serial.list();
+  // The Hakimi ESP32-P4 board uses the CH343 USB serial bridge. Restrict the
+  // automatic connection to that known VID/PID so another serial device is
+  // never opened just because it happens to be present at startup.
+  const candidate = devices.find((port) => {
+    const vendor = port.vendorId?.toLowerCase();
+    const product = port.productId?.toLowerCase();
+    return vendor === '1a86' && product === '55d3';
+  });
+  if (!candidate) return;
+  try {
+    await serial.connect(candidate.path);
+    clearStaleDraftOnDeviceConnect();
+  } catch (error) {
+    lastError = `自动连接 Hakimi 失败：${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
 app.whenReady().then(() => {
   registerIpc();
   stopComposerWatcher = watchAgentComposer('Codex', applyComposerSnapshot, (detail) => {
@@ -660,7 +679,7 @@ app.whenReady().then(() => {
   });
   startVoiceAutomationTicker();
   createWindow();
-  void publishState();
+  void autoConnectHakimi().then(() => publishState());
   setInterval(() => void publishState(), 2500);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
