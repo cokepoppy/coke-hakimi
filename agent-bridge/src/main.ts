@@ -138,6 +138,7 @@ if (keyboardlessVoiceEnabled) keyboardlessVoice.enable();
 let keyboardlessVoicePending = false;
 let keyboardlessFocusPromise: ReturnType<typeof focusCodexWindow> | undefined;
 let keyboardlessLastEvent: string | undefined;
+let keyboardlessVoiceKeyDown = false;
 let deviceWakeWordReady = false;
 let deviceWakeWordModel: string | undefined;
 let lastDeviceAgentKey = '';
@@ -312,12 +313,16 @@ function gesture(payload: Record<string, unknown>): string {
   return String(payload.gesture || payload.phase || '').toLowerCase();
 }
 
-async function beginVoiceInput(focusPromise?: ReturnType<typeof focusCodexWindow>): Promise<void> {
+async function beginVoiceInput(
+  focusPromise?: ReturnType<typeof focusCodexWindow>,
+  source: 'physical' | 'keyboardless' = 'physical',
+): Promise<void> {
   const focus = await (focusPromise || focusCodexWindow('Codex'));
   if (!focus.focused) lastError = focus.detail;
   if (voiceKeyDown) return;
   const key = await postKey('fn', 'down');
   voiceKeyDown = key.ok;
+  keyboardlessVoiceKeyDown = source === 'keyboardless' && key.ok;
   refreshComposerStatus();
   broadcast('bridge-action', { type: 'voice', phase: 'start', detail: `${focus.detail}；${key.detail}` });
   await publishState();
@@ -348,9 +353,11 @@ async function handleKeyboardlessVoiceEvent(event: VoiceAutomationEvent): Promis
   });
 
   if (event.type === 'wake-detected') {
-    // Warm up the target window while the user is pausing after the wake
-    // phrase. The command itself is not forwarded until command-start.
+    // Focus the target window and press Fn immediately after WakeNet fires.
+    // Waiting until command-start is too late: the first syllables of the
+    // user's command arrive before Doubao has entered listening mode.
     keyboardlessFocusPromise = focusCodexWindow('Codex');
+    await beginVoiceInput(keyboardlessFocusPromise, 'keyboardless');
     sendVoiceStatus(event.mode === 'wake-word' ? '已唤醒，请说话' : '请说话', 'waiting_user');
     await publishState();
     return;
@@ -370,6 +377,7 @@ async function handleKeyboardlessVoiceEvent(event: VoiceAutomationEvent): Promis
     return;
   }
   if (event.type === 'command-timeout') {
+    await endVoiceInput();
     keyboardlessFocusPromise = undefined;
     sendVoiceStatus('等待唤醒', 'listening');
     await publishState();
@@ -401,13 +409,17 @@ async function endVoiceInput(): Promise<void> {
   if (!voiceKeyDown) return;
   const key = await postKey('fn', 'up');
   voiceKeyDown = false;
+  keyboardlessVoiceKeyDown = false;
   refreshComposerStatus();
   broadcast('bridge-action', { type: 'voice', phase: 'end', detail: key.detail });
   await publishState();
 }
 
 function shouldForwardAudio(): boolean {
-  return voiceKeyDown || audioMonitor || keyboardlessVoicePending;
+  // A keyboardless session presses Fn at wake time, but must not forward the
+  // wake phrase or the pause after it. Forward only after command-start.
+  const physicalVoiceKeyDown = voiceKeyDown && !keyboardlessVoiceKeyDown;
+  return physicalVoiceKeyDown || audioMonitor || keyboardlessVoicePending;
 }
 
 function publishAudioMeter(): void {

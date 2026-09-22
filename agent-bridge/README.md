@@ -61,7 +61,11 @@ The current physical controls are:
 The keyboardless route is enabled by default for the bridge. In its current
 safe fallback mode, the first short speech segment is treated as a wake
 candidate and discarded; after the screen says `请说话`, the next speech
-segment is sent to Doubao and stable silence releases Fn. Set
+segment is sent to Doubao and stable silence releases Fn. With the official
+WakeNet route, the bridge focuses the target window and presses Fn immediately
+after the hardware wake event, before the command segment starts; the wake
+phrase and the pause after it are still excluded from the PCM forwarded to
+Doubao. Set
 `HAKIMI_AUTO_VOICE=0` for display/composer regression tests without automatic
 voice activation.
 
