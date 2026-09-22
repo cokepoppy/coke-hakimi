@@ -157,6 +157,7 @@ let composerSnapshot: ComposerSnapshot | undefined;
 let composerSignature = '';
 let inputDraftRevision = 0;
 let stopComposerWatcher: (() => void) | undefined;
+let stopVoiceAutomationTicker: (() => void) | undefined;
 const audioSink = new SerialAudioSink((line) => broadcast('serial-audio-line', line));
 const virtualMicGain = Number.isFinite(Number(process.env.HAKIMI_VIRTUAL_MIC_GAIN))
   ? Number(process.env.HAKIMI_VIRTUAL_MIC_GAIN)
@@ -531,6 +532,16 @@ function handleWakeWordMessage(message: DeviceMessage): void {
   if (event) void handleKeyboardlessVoiceEvent(event);
 }
 
+function startVoiceAutomationTicker(): void {
+  const timer = setInterval(() => {
+    if (!keyboardlessVoiceEnabled) return;
+    for (const event of keyboardlessVoice.tick(Date.now())) {
+      void handleKeyboardlessVoiceEvent(event);
+    }
+  }, 100);
+  stopVoiceAutomationTicker = () => clearInterval(timer);
+}
+
 async function handleDeviceMessage(message: DeviceMessage): Promise<void> {
   if (message.topic === 'audio/pcm') {
     handleAudioPcm(message);
@@ -647,6 +658,7 @@ app.whenReady().then(() => {
   stopComposerWatcher = watchAgentComposer('Codex', applyComposerSnapshot, (detail) => {
     if (!lastError) lastError = detail;
   });
+  startVoiceAutomationTicker();
   createWindow();
   void publishState();
   setInterval(() => void publishState(), 2500);
@@ -661,6 +673,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   stopComposerWatcher?.();
+  stopVoiceAutomationTicker?.();
   void audioSink.stop();
 });
 

@@ -65,6 +65,17 @@ const ignoredVoice = wakeWordSession.feed(lowLevelSpeech, 0);
 const wakeEvent = wakeWordSession.triggerWake(20);
 const capturedAfterWake = wakeWordSession.feed(lowLevelSpeech, 20);
 
+// The device may stop producing PCM after speech. The wall-clock tick must
+// still release the command session in that case.
+const pausedSession = new KeyboardlessVoiceAutomation(config);
+pausedSession.setMode('wake-word');
+pausedSession.enable(0);
+pausedSession.triggerWake(0);
+pausedSession.feed(lowLevelSpeech, 0);
+const pausedEndEvents = pausedSession.tick(150);
+const pausedEndPass = pausedEndEvents.some((event) => event.type === 'command-end')
+  && pausedSession.getPhase() === 'cooldown';
+
 const hardwareWakePass = !ignoredVoice.events.some((event) => event.type === 'wake-detected')
   && wakeEvent?.type === 'wake-detected'
   && wakeEvent.mode === 'wake-word'
@@ -78,7 +89,8 @@ const pass = events.includes('wake-detected')
   && afterCommand === 'cooldown'
   && afterTimeout === 'waiting_wake'
   && forwardedFrames.length > 0
-  && hardwareWakePass;
+  && hardwareWakePass
+  && pausedEndPass;
 console.log(JSON.stringify({
   events,
   afterWake,
@@ -86,6 +98,8 @@ console.log(JSON.stringify({
   afterTimeout,
   forwardedFrameCount: forwardedFrames.length,
   hardwareWakePass,
+  pausedEndEvents: pausedEndEvents.map((event) => event.type),
+  pausedEndPass,
   pass,
 }, null, 2));
 await rm(directory, { recursive: true, force: true });

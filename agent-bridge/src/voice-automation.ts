@@ -122,6 +122,55 @@ export class KeyboardlessVoiceAutomation {
     return { type: 'wake-detected', durationMs: 0, mode: 'wake-word' };
   }
 
+  /**
+   * Advance time-based transitions even when the device is not delivering a
+   * PCM frame. The serial stream can pause after speech, so relying only on
+   * feed() would leave the macOS Fn key held forever.
+   */
+  tick(nowMs = Date.now()): VoiceAutomationEvent[] {
+    const events: VoiceAutomationEvent[] = [];
+    const frameMs = 20;
+
+    if (this.phase === 'off') return events;
+
+    if (this.phase === 'cooldown' && nowMs >= this.cooldownUntil) {
+      this.phase = 'waiting_wake';
+      this.clearPreRoll();
+    }
+
+    if (this.phase === 'waiting_command' && nowMs >= this.waitingCommandUntil && !this.speaking) {
+      this.phase = 'waiting_wake';
+      this.clearPreRoll();
+      events.push({ type: 'command-timeout' });
+    }
+
+    if (this.speaking && nowMs - this.lastSpeechAt >= this.config.endSilenceMs) {
+      const durationMs = Math.max(frameMs, this.lastSpeechAt - this.speechStartedAt + frameMs);
+      this.speaking = false;
+      if (this.phase === 'capturing') {
+        this.phase = 'cooldown';
+        this.cooldownUntil = nowMs + this.config.cooldownMs;
+        events.push({ type: 'command-end', reason: 'silence' });
+      } else if (this.phase === 'waiting_wake' && this.mode === 'vad-fallback') {
+        if (durationMs >= this.config.minWakeSpeechMs && durationMs <= this.config.maxWakeSpeechMs) {
+          this.phase = 'waiting_command';
+          this.waitingCommandUntil = nowMs + this.config.commandTimeoutMs;
+          this.clearPreRoll();
+          events.push({ type: 'wake-detected', durationMs, mode: this.mode });
+        }
+      }
+    }
+
+    if (this.phase === 'capturing' && nowMs - this.speechStartedAt >= this.config.maxCaptureMs) {
+      this.speaking = false;
+      this.phase = 'cooldown';
+      this.cooldownUntil = nowMs + this.config.cooldownMs;
+      events.push({ type: 'command-end', reason: 'max-duration' });
+    }
+
+    return events;
+  }
+
   feed(pcm: Buffer, nowMs: number): VoiceAutomationFeed {
     const frameMs = Math.max(1, (pcm.length / 2 / this.config.sampleRate) * 1000);
     const rms = pcmRms(pcm);
