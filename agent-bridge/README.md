@@ -44,8 +44,11 @@ The serial-audio image reads the Waveshare ES8311 microphone at 16 kHz and sends
 20 ms PCM frames as JSONL. Electron forwards command PCM to the macOS
 `BlackHole 2ch` virtual microphone after the keyboardless voice state machine
 detects a command segment, or while voice PTT/the explicit audio test is
-active. Electron does not run command ASR, so Doubao remains responsible for
-speech-to-text.
+active. The bridge keeps WakeNet/VAD on the raw PCM, then applies a bounded
+8x gain only to the copy sent to BlackHole because the assembled ES8311 signal
+is much quieter than a normal Mac microphone; override it with
+`HAKIMI_VIRTUAL_MIC_GAIN` when calibrating. Electron does not run command ASR,
+so Doubao remains responsible for speech-to-text.
 
 The current physical controls are:
 

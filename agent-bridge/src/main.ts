@@ -14,7 +14,7 @@ import {
   type ComposerSnapshot,
 } from './macos';
 import { AgentRegistry } from './agent-adapter';
-import { SerialAudioSink } from './audio';
+import { boostPcmForVirtualMic, DEFAULT_VIRTUAL_MIC_GAIN, SerialAudioSink } from './audio';
 import { identifyP4Chip } from './firmware';
 import {
   KeyboardlessVoiceAutomation,
@@ -157,6 +157,9 @@ let composerSignature = '';
 let inputDraftRevision = 0;
 let stopComposerWatcher: (() => void) | undefined;
 const audioSink = new SerialAudioSink((line) => broadcast('serial-audio-line', line));
+const virtualMicGain = Number.isFinite(Number(process.env.HAKIMI_VIRTUAL_MIC_GAIN))
+  ? Number(process.env.HAKIMI_VIRTUAL_MIC_GAIN)
+  : DEFAULT_VIRTUAL_MIC_GAIN;
 
 function broadcast(channel: string, payload: unknown): void {
   for (const target of BrowserWindow.getAllWindows()) target.webContents.send(channel, payload);
@@ -489,8 +492,18 @@ function handleAudioPcm(message: DeviceMessage): void {
   if (!shouldForwardAudio() && !automationFeed?.forward) return;
   void audioSink.start().then(() => {
     if (!shouldForwardAudio()) return;
-    if (audioSink.write(pcm)) audioFramesForwarded += 1;
-    else audioFramesDropped += 1;
+    const writeFrame = (frame: Buffer): void => {
+      if (audioSink.write(boostPcmForVirtualMic(frame, virtualMicGain))) audioFramesForwarded += 1;
+      else audioFramesDropped += 1;
+    };
+    // Include the short pre-roll collected after WakeNet fired so the first
+    // syllables are not lost while the native CoreAudio sink starts.
+    for (const event of automationFeed?.events || []) {
+      if (event.type === 'command-start') {
+        for (const frame of event.preRoll) writeFrame(frame);
+      }
+    }
+    writeFrame(pcm);
     publishAudioMeter();
   }).catch((error) => {
     audioFramesDropped += 1;

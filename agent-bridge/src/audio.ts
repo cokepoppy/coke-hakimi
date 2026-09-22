@@ -18,6 +18,21 @@ type NativeResponse = {
 };
 
 const DEFAULT_DEVICE = 'BlackHole 2ch';
+export const DEFAULT_VIRTUAL_MIC_GAIN = 8;
+
+/** Keep raw PCM for WakeNet/VAD; boost only the copy sent to BlackHole. */
+export function boostPcmForVirtualMic(pcm: Buffer, gain = DEFAULT_VIRTUAL_MIC_GAIN): Buffer {
+  if (gain === 1) return Buffer.from(pcm);
+  const output = Buffer.allocUnsafe(pcm.length);
+  const boundedGain = Math.max(1, Math.min(gain, 12));
+  for (let offset = 0; offset + 1 < pcm.length; offset += 2) {
+    const sample = pcm.readInt16LE(offset);
+    const boosted = Math.max(-32768, Math.min(32767, Math.round(sample * boundedGain)));
+    output.writeInt16LE(boosted, offset);
+  }
+  if (pcm.length % 2) output[pcm.length - 1] = pcm[pcm.length - 1];
+  return output;
+}
 
 /**
  * Feeds signed 16-bit little-endian mono PCM to a macOS CoreAudio output
