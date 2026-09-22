@@ -15,6 +15,11 @@ CONFIG_FREERTOS_HZ=1000
 # than the default 1 MB factory partition. Use the checked-in 4 MB layout.
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+# The first concrete official model is 小龙小龙.  The exact 小哈小哈 model
+# is not bundled by Espressif and can later replace this model without
+# changing the serial protocol or Mac-side voice flow.
+CONFIG_MODEL_IN_FLASH=y
+CONFIG_SR_WN_WN9_XIAOLONGXIAOLONG_TTS=y
 # Compact labels use main/hakimi_font_cjk_14.c and Agent output uses the native
 # main/hakimi_font_cjk_20.c font. The larger text deliberately avoids LVGL
 # transform scaling because transformed wrapped CJK text can disappear on the

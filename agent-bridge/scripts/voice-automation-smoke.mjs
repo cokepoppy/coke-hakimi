@@ -53,19 +53,36 @@ const afterCommand = session.getPhase();
 for (let index = 0; index < 20; index += 1) feed(silence);
 const afterTimeout = session.getPhase();
 
+// Hardware WakeNet mode must ignore a voice-shaped frame until the board sends
+// an explicit audio/wake event, then reuse the same command VAD/capture path.
+const wakeWordSession = new KeyboardlessVoiceAutomation(config);
+wakeWordSession.setMode('wake-word');
+wakeWordSession.enable(0);
+const ignoredVoice = wakeWordSession.feed(speech, 0);
+const wakeEvent = wakeWordSession.triggerWake(20);
+const capturedAfterWake = wakeWordSession.feed(speech, 20);
+
+const hardwareWakePass = !ignoredVoice.events.some((event) => event.type === 'wake-detected')
+  && wakeEvent?.type === 'wake-detected'
+  && wakeEvent.mode === 'wake-word'
+  && wakeWordSession.getPhase() === 'capturing'
+  && capturedAfterWake.forward;
+
 const pass = events.includes('wake-detected')
   && events.includes('command-start')
   && events.includes('command-end')
   && afterWake === 'waiting_command'
   && afterCommand === 'cooldown'
   && afterTimeout === 'waiting_wake'
-  && forwardedFrames.length > 0;
+  && forwardedFrames.length > 0
+  && hardwareWakePass;
 console.log(JSON.stringify({
   events,
   afterWake,
   afterCommand,
   afterTimeout,
   forwardedFrameCount: forwardedFrames.length,
+  hardwareWakePass,
   pass,
 }, null, 2));
 await rm(directory, { recursive: true, force: true });

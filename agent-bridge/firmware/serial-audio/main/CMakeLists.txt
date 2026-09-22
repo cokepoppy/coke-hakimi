@@ -4,5 +4,5 @@ idf_component_register(
   # recovery and comparison.
   SRCS "main.c" "display_lvgl.c" "hakimi_font_cjk_14.c" "hakimi_font_cjk_20.c" "hakimi_pet_frames.c" "hakimi_pet_working_anim.c"
   INCLUDE_DIRS "."
-  REQUIRES lvgl espressif__esp_codec_dev espressif__esp_lcd_st7701
+  REQUIRES lvgl espressif__esp_codec_dev espressif__esp_lcd_st7701 espressif__esp-sr
 )

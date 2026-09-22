@@ -3,4 +3,6 @@
 # default 1 MB. The ESP32-P4 has 32 MB flash, so reserve 4 MB for UI growth.
 nvs,      data, nvs,     ,        0x6000,
 phy_init, data, phy,     ,        0x1000,
-factory,  app,  factory, ,        4M,
+factory,  app,  factory, ,        8M,
+# ESP-SR packages the selected WakeNet model into this data partition.
+model,    data, spiffs,  ,        8M,

@@ -6,7 +6,7 @@ export type VoiceAutomationPhase =
   | 'cooldown';
 
 export type VoiceAutomationEvent =
-  | { type: 'wake-detected'; durationMs: number; mode: 'vad-fallback' }
+  | { type: 'wake-detected'; durationMs: number; mode: 'vad-fallback' | 'wake-word' }
   | { type: 'command-start'; preRoll: Buffer[] }
   | { type: 'command-end'; reason: 'silence' | 'max-duration' }
   | { type: 'command-timeout' };
@@ -71,6 +71,7 @@ export class KeyboardlessVoiceAutomation {
   private cooldownUntil = 0;
   private preRoll: Buffer[] = [];
   private preRollDurationMs = 0;
+  private mode: 'vad-fallback' | 'wake-word' = 'vad-fallback';
 
   constructor(config: Partial<VoiceAutomationConfig> = {}) {
     this.config = { ...DEFAULT_VOICE_AUTOMATION_CONFIG, ...config };
@@ -78,6 +79,14 @@ export class KeyboardlessVoiceAutomation {
 
   getPhase(): VoiceAutomationPhase {
     return this.phase;
+  }
+
+  getMode(): 'vad-fallback' | 'wake-word' {
+    return this.mode;
+  }
+
+  setMode(mode: 'vad-fallback' | 'wake-word'): void {
+    this.mode = mode;
   }
 
   enable(nowMs = Date.now()): void {
@@ -92,6 +101,20 @@ export class KeyboardlessVoiceAutomation {
     this.phase = 'off';
     this.speaking = false;
     this.clearPreRoll();
+  }
+
+  /**
+   * Accept a wake event from a real on-device detector such as ESP-SR/WakeNet.
+   * The wake-word audio is intentionally not forwarded to Doubao; only the
+   * following command segment is captured.
+   */
+  triggerWake(nowMs = Date.now()): VoiceAutomationEvent | undefined {
+    if (this.phase !== 'waiting_wake') return undefined;
+    this.speaking = false;
+    this.phase = 'waiting_command';
+    this.waitingCommandUntil = nowMs + this.config.commandTimeoutMs;
+    this.clearPreRoll();
+    return { type: 'wake-detected', durationMs: 0, mode: 'wake-word' };
   }
 
   feed(pcm: Buffer, nowMs: number): VoiceAutomationFeed {
@@ -132,12 +155,12 @@ export class KeyboardlessVoiceAutomation {
     } else if (this.speaking && nowMs - this.lastSpeechAt >= this.config.endSilenceMs) {
       const durationMs = Math.max(frameMs, this.lastSpeechAt - this.speechStartedAt + frameMs);
       this.speaking = false;
-      if (this.phase === 'waiting_wake') {
+      if (this.phase === 'waiting_wake' && this.mode === 'vad-fallback') {
         if (durationMs >= this.config.minWakeSpeechMs && durationMs <= this.config.maxWakeSpeechMs) {
           this.phase = 'waiting_command';
           this.waitingCommandUntil = nowMs + this.config.commandTimeoutMs;
           this.clearPreRoll();
-          events.push({ type: 'wake-detected', durationMs, mode: 'vad-fallback' });
+          events.push({ type: 'wake-detected', durationMs, mode: this.mode });
         }
       } else if (this.phase === 'capturing') {
         this.phase = 'cooldown';

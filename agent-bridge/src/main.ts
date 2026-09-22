@@ -82,8 +82,19 @@ class HakimiSerial {
       else broadcast('serial-line', String(line).slice(0, 500));
     });
     port.on('error', (error) => broadcast('bridge-error', error.message));
-    port.on('close', () => broadcast('device-disconnected', this.current));
+    port.on('close', () => {
+      // A reconnect may come from an older image without WakeNet. Do not keep
+      // the previous board's wake-word mode after the serial port disappears.
+      deviceWakeWordReady = false;
+      deviceWakeWordModel = undefined;
+      keyboardlessVoice.setMode('vad-fallback');
+      broadcast('device-disconnected', this.current);
+    });
     this.send({ topic: 'bridge/hello', payload: { protocol: 'hakimi-agent-bridge-v1', tsMs: Date.now() } });
+    // The board may have booted before Electron connects, so query the
+    // current microphone/WakeNet state instead of relying only on the
+    // one-shot audio/status message emitted during boot.
+    this.send({ topic: 'audio/query', payload: { source: 'bridge-connect' } });
     return match;
   }
 
@@ -127,6 +138,8 @@ if (keyboardlessVoiceEnabled) keyboardlessVoice.enable();
 let keyboardlessVoicePending = false;
 let keyboardlessFocusPromise: ReturnType<typeof focusCodexWindow> | undefined;
 let keyboardlessLastEvent: string | undefined;
+let deviceWakeWordReady = false;
+let deviceWakeWordModel: string | undefined;
 let lastDeviceAgentKey = '';
 let audioInputsCache: Awaited<ReturnType<typeof listAudioInputs>> = [];
 let audioInputsCachedAt = 0;
@@ -176,7 +189,7 @@ async function state(): Promise<BridgeState> {
     voiceAutomation: {
       enabled: keyboardlessVoiceEnabled,
       phase: keyboardlessVoice.getPhase(),
-      mode: 'vad-fallback',
+      mode: deviceWakeWordReady ? 'wake-word-pending' : 'vad-fallback',
       lastEvent: keyboardlessLastEvent,
     },
     accessibilityTrusted: await accessibilityTrusted(),
@@ -335,7 +348,7 @@ async function handleKeyboardlessVoiceEvent(event: VoiceAutomationEvent): Promis
     // Warm up the target window while the user is pausing after the wake
     // phrase. The command itself is not forwarded until command-start.
     keyboardlessFocusPromise = focusCodexWindow('Codex');
-    sendVoiceStatus('请说话', 'waiting_user');
+    sendVoiceStatus(event.mode === 'wake-word' ? '已唤醒，请说话' : '请说话', 'waiting_user');
     await publishState();
     return;
   }
@@ -366,7 +379,9 @@ async function setKeyboardlessVoice(enabled: boolean): Promise<{ ok: boolean; de
   keyboardlessFocusPromise = undefined;
   if (enabled) {
     keyboardlessVoice.enable();
-    const detail = '已启用免键盘语音：等待 VAD 唤醒候选';
+    const detail = deviceWakeWordReady
+      ? `已启用免键盘语音：等待板端唤醒词 ${deviceWakeWordModel || ''}`.trim()
+      : '已启用免键盘语音：等待 VAD 唤醒候选';
     broadcast('bridge-action', { type: 'voice-automation', phase: 'enabled', detail });
     await publishState();
     return { ok: true, detail };
@@ -485,9 +500,34 @@ function handleAudioPcm(message: DeviceMessage): void {
   });
 }
 
+function handleWakeWordMessage(message: DeviceMessage): void {
+  if (!keyboardlessVoiceEnabled || !deviceWakeWordReady) return;
+  const event = keyboardlessVoice.triggerWake(Date.now());
+  if (event) void handleKeyboardlessVoiceEvent(event);
+}
+
 async function handleDeviceMessage(message: DeviceMessage): Promise<void> {
   if (message.topic === 'audio/pcm') {
     handleAudioPcm(message);
+    return;
+  }
+  if (message.topic === 'audio/status') {
+    const payload = message.payload || {};
+    if (payload.wakeWord === true) {
+      deviceWakeWordReady = true;
+      deviceWakeWordModel = typeof payload.wakeWordModel === 'string' ? payload.wakeWordModel : undefined;
+      keyboardlessVoice.setMode('wake-word');
+    } else if (payload.wakeWord === false) {
+      deviceWakeWordReady = false;
+      deviceWakeWordModel = undefined;
+      keyboardlessVoice.setMode('vad-fallback');
+    }
+    broadcast('device-message', message);
+    await publishState();
+    return;
+  }
+  if (message.topic === 'audio/wake') {
+    handleWakeWordMessage(message);
     return;
   }
   if (message.topic !== 'input/event' || !message.payload) return;

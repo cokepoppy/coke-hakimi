@@ -9,9 +9,23 @@ ESP32 ES8311 -> 4,000,000 baud UART -> Electron -> BlackHole 2ch -> Doubao
 ```
 
 Each `audio/pcm` packet contains 20 ms of 16 kHz, mono, signed 16-bit little-
-endian PCM encoded as Base64. Electron only forwards packets while the voice
-push-to-talk action is active, or while its explicit audio test button is on.
-No ASR API is involved.
+endian PCM encoded as Base64. Electron only forwards packets after the official
+WakeNet event (or the VAD fallback), while the command is being spoken. No ASR
+API is involved: Doubao receives the PCM through BlackHole and performs the
+transcription itself.
+
+This build includes Espressif's official ESP-SR model
+`wn9_xiaolongxiaolong_tts` (小龙小龙). The exact phrase 小哈小哈 is not one of
+the bundled official models. At boot the board sends:
+
+```json
+{"topic":"audio/status","payload":{"wakeWord":true,"wakeWordModel":"wn9_xiaolongxiaolong_tts"}}
+```
+
+When the model detects the phrase it sends `audio/wake`. The bridge then
+focuses the active agent window, presses macOS Fn, and forwards only the next
+command segment. If the model partition is unavailable, the bridge reports
+`wakeWord:false` and uses the existing VAD fallback.
 
 The project is V3-only. It uses Espressif's official `esp_codec_dev` ES8311
 driver and the Waveshare P4 pin map (I2C 7/8, I2S 13/12/10/9/11). Build with
@@ -26,13 +40,17 @@ The CH343 flashing speed is deliberately 460800: this board produced a
 packet-noise error when esptool switched the same link to 921600. The runtime
 audio JSONL link changes to 4,000,000 baud after the application starts.
 
-The generated factory image is:
+The generated factory image includes the application, partition table, and
+ESP-SR model partition:
 
 ```text
 .pio/build/hakimi_serial_audio_v3/firmware.factory.bin
 ```
 
-The post-build hook bounds both images to ESP32-P4 full revisions 300-399.
+The post-build hook bounds both images to ESP32-P4 full revisions 300-399 and
+packs `srmodels.bin` into the 8 MB model partition at 0x810000. The application
+partition is 8 MB because the official WakeNet runtime makes the firmware
+larger than the previous 4 MB layout.
 The device currently detected in this workspace is revision 3.2, so it is
 inside that gate.
 

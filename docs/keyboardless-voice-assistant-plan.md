@@ -5,7 +5,7 @@
 在不依赖绿 PCB 按键和摇杆的情况下，让 ESP32-P4 + 屏幕 + 麦克风完成一轮语音输入：
 
 ```text
-说唤醒短语（例如“小哈小哈”）
+说官方 WakeNet 唤醒短语“小龙小龙”（当前选定模型）
         ↓
 Hakimi 进入 LISTENING，屏幕提示“请说话”
         ↓
@@ -25,7 +25,15 @@ Electron 不做云端 ASR。豆包仍然负责把真正的命令语音转成文�
 ESP32 当前只输出 16 kHz、单声道、16-bit PCM。它不能仅靠原始 PCM 判断“小哈小哈”这几个汉字，因此需要独立的本地唤醒检测器。实现分两层：
 
 1. 当前可立即验证的 `VAD wake fallback`：第一段连续人声作为唤醒候选，不转发给豆包；静音结束后进入等待命令状态。它能完整验证“唤醒→等待→Fn→VAD 结束→松开 Fn”链路，但不是严格的词语识别。
-2. 正式的“小哈小哈”模式：把本地离线 wake-word 模型接到同一个 `WakeDetector` 接口。模型只决定是否唤醒，不接管命令转写，也不改变豆包输入链路。模型不可用时自动回退到 VAD wake，并在桥接 UI 显示当前模式。
+2. 正式的本地离线 WakeNet 模式：当前使用 Espressif 官方随 ESP-SR 提供的
+   `wn9_xiaolongxiaolong_tts`（小龙小龙）。官方内置模型列表中没有“小哈小哈”；
+   如果以后要换成自定义词，需要按 Espressif 的唤醒词定制流程训练/打包模型，不能只改字符串。
+   模型只决定是否唤醒，不接管命令转写，也不改变豆包输入链路。模型不可用时自动回退到
+   VAD wake，并在桥接状态里显示当前模式。
+
+板端通过 `audio/status` 声明 `wakeWord=true` 和 `wakeWordModel`，命中后发送
+`audio/wake`；Electron 收到后才进入等待命令状态。唤醒词本身不会送入豆包，只有后续
+命令 PCM 会在确认说话后转发。
 
 ## 状态机
 
@@ -33,7 +41,8 @@ ESP32 当前只输出 16 kHz、单声道、16-bit PCM。它不能仅靠原始 PC
 OFF
   └─ enable → WAITING_WAKE
 WAITING_WAKE
-  └─ 人声片段结束 → WAITING_COMMAND（VAD fallback 唤醒）
+  ├─ VAD 人声片段结束 → WAITING_COMMAND（回退模式）
+  └─ 板端 `audio/wake` → WAITING_COMMAND（官方 WakeNet）
 WAITING_COMMAND
   ├─ 超时 → WAITING_WAKE
   └─ 检测到命令人声 → CAPTURING（Fn down + PCM 转发）

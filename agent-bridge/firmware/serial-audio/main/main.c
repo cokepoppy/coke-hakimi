@@ -13,11 +13,14 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_wn_iface.h"
+#include "esp_wn_models.h"
 #include "es8311_codec.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "mbedtls/base64.h"
+#include "model_path.h"
 
 #include "display.h"
 
@@ -50,6 +53,8 @@
 
 static const char *TAG = "hakimi-serial-audio";
 static SemaphoreHandle_t uart_output_mutex;
+static volatile bool g_wake_word_ready;
+static const char *g_wake_word_model;
 
 static void emit_line(const char *format, ...)
 {
@@ -61,16 +66,94 @@ static void emit_line(const char *format, ...)
     va_end(args);
 }
 
-static void emit_status(const char *state, const char *detail)
+static void emit_status_with_wake(const char *state, const char *detail, bool wake_word, const char *wake_word_model)
 {
     emit_line(
-        "{\"topic\":\"audio/status\",\"payload\":{\"state\":\"%s\",\"sampleRate\":%d,\"channels\":%d,\"bitsPerSample\":%d,\"encoding\":\"s16le\",\"detail\":\"%s\"}}\n",
+        "{\"topic\":\"audio/status\",\"payload\":{\"state\":\"%s\",\"sampleRate\":%d,\"channels\":%d,\"bitsPerSample\":%d,\"encoding\":\"s16le\",\"wakeWord\":%s,\"wakeWordModel\":\"%s\",\"detail\":\"%s\"}}\n",
         state,
         SAMPLE_RATE,
         CHANNELS,
         BITS_PER_SAMPLE,
+        wake_word ? "true" : "false",
+        wake_word_model ? wake_word_model : "",
         detail
     );
+}
+
+static void emit_status(const char *state, const char *detail)
+{
+    emit_status_with_wake(state, detail, false, NULL);
+}
+
+typedef struct {
+    esp_wn_iface_t *iface;
+    model_iface_data_t *model_data;
+    int16_t *chunk;
+    size_t chunk_samples;
+    size_t filled_samples;
+    const char *model_name;
+    bool ready;
+} wake_detector_t;
+
+static bool wake_detector_init(wake_detector_t *detector)
+{
+    memset(detector, 0, sizeof(*detector));
+    srmodel_list_t *models = esp_srmodel_init("model");
+    if (!models) {
+        ESP_LOGW(TAG, "ESP-SR model partition is unavailable");
+        return false;
+    }
+    char *model_name = esp_srmodel_filter(models, ESP_WN_PREFIX, "xiaolongxiaolong_tts");
+    if (!model_name) {
+        ESP_LOGW(TAG, "official WakeNet model xiaolongxiaolong_tts is unavailable");
+        return false;
+    }
+    detector->iface = (esp_wn_iface_t *)esp_wn_handle_from_name(model_name);
+    if (!detector->iface) {
+        ESP_LOGW(TAG, "WakeNet interface is unavailable for %s", model_name);
+        return false;
+    }
+    detector->model_data = detector->iface->create(model_name, DET_MODE_95);
+    if (!detector->model_data) {
+        ESP_LOGW(TAG, "WakeNet model creation failed for %s", model_name);
+        return false;
+    }
+    detector->chunk_samples = (size_t)detector->iface->get_samp_chunksize(detector->model_data);
+    detector->chunk = calloc(detector->chunk_samples, sizeof(int16_t));
+    if (!detector->chunk || detector->chunk_samples == 0) {
+        ESP_LOGW(TAG, "WakeNet audio buffer allocation failed");
+        return false;
+    }
+    detector->model_name = model_name;
+    detector->ready = true;
+    ESP_LOGI(TAG, "WakeNet ready: %s, chunk=%u samples", model_name, (unsigned)detector->chunk_samples);
+    return true;
+}
+
+static bool wake_detector_feed(wake_detector_t *detector, const int16_t *pcm, size_t sample_count)
+{
+    if (!detector->ready) return false;
+    bool detected = false;
+    size_t offset = 0;
+    while (offset < sample_count) {
+        const size_t remaining = detector->chunk_samples - detector->filled_samples;
+        const size_t copy_count = sample_count - offset < remaining ? sample_count - offset : remaining;
+        memcpy(detector->chunk + detector->filled_samples, pcm + offset, copy_count * sizeof(int16_t));
+        detector->filled_samples += copy_count;
+        offset += copy_count;
+        if (detector->filled_samples < detector->chunk_samples) continue;
+        const wakenet_state_t state = detector->iface->detect(detector->model_data, detector->chunk);
+        detector->filled_samples = 0;
+        if (state == WAKENET_DETECTED) {
+            detected = true;
+            emit_line(
+                "{\"topic\":\"audio/wake\",\"payload\":{\"wakeWord\":\"%s\",\"tsMs\":%lld}}\n",
+                detector->model_name,
+                (long long)(esp_timer_get_time() / 1000)
+            );
+        }
+    }
+    return detected;
 }
 
 static void emit_pcm(uint32_t sequence, const uint8_t *pcm)
@@ -284,6 +367,17 @@ static void control_task(void *arg)
             emit_input_levels();
             continue;
         }
+        if (strcmp(topic, "audio/query") == 0) {
+            emit_status_with_wake(
+                g_wake_word_ready ? "ready" : "starting",
+                g_wake_word_ready
+                    ? "serial PCM microphone and WakeNet ready"
+                    : "serial PCM microphone ready; WakeNet unavailable",
+                g_wake_word_ready,
+                g_wake_word_ready ? g_wake_word_model : NULL
+            );
+            continue;
+        }
         if (strcmp(topic, "display/query") == 0) {
             emit_control_ack(topic, "display cache queried");
             continue;
@@ -476,7 +570,16 @@ void app_main(void)
         ESP_LOGE(TAG, "microphone initialization failed: %s", esp_err_to_name(setup_result));
         return;
     }
-    emit_status("ready", "serial PCM microphone ready");
+    wake_detector_t wake_detector;
+    const bool wake_word_ready = wake_detector_init(&wake_detector);
+    g_wake_word_ready = wake_word_ready;
+    g_wake_word_model = wake_word_ready ? wake_detector.model_name : NULL;
+    emit_status_with_wake(
+        "ready",
+        wake_word_ready ? "serial PCM microphone and WakeNet ready" : "serial PCM microphone ready; WakeNet unavailable",
+        wake_word_ready,
+        wake_word_ready ? wake_detector.model_name : NULL
+    );
     ESP_LOGI(TAG, "serial audio ready: %d Hz, %d-bit, mono, %d-byte frames", SAMPLE_RATE, BITS_PER_SAMPLE, FRAME_BYTES);
 
     uint8_t pcm[FRAME_BYTES];
@@ -490,6 +593,10 @@ void app_main(void)
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
+        // The detector sees the same mono 16 kHz stream as the Mac.  Wake
+        // words are intentionally not sent to Doubao; only audio after the
+        // wake event is forwarded by the Electron state machine.
+        wake_detector_feed(&wake_detector, (const int16_t *)pcm, FRAME_SAMPLES);
         emit_pcm(sequence++, pcm);
     }
 }
