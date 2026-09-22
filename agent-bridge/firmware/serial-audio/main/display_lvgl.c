@@ -21,6 +21,7 @@
 // square placeholders when they contain ordinary Simplified Chinese text.
 extern const lv_font_t hakimi_font_cjk_14;
 extern const lv_font_t hakimi_font_cjk_20;
+extern const lv_font_t hakimi_font_cjk_24;
 extern const lv_image_dsc_t hakimi_pet_idle;
 extern const lv_image_dsc_t hakimi_pet_working;
 extern const lv_image_dsc_t hakimi_pet_working_frames[4];
@@ -175,11 +176,11 @@ static lv_obj_t *make_label(lv_obj_t *parent, const char *text, lv_color_t color
     lv_obj_set_height(label, height);
     lv_obj_set_style_text_color(label, color, 0);
     lv_obj_set_style_text_font(label,
-                               size >= 18 ? &hakimi_font_cjk_20 : &hakimi_font_cjk_14,
+                               size >= 22 ? &hakimi_font_cjk_24 : (size >= 18 ? &hakimi_font_cjk_20 : &hakimi_font_cjk_14),
                                0);
     // Use native font metrics. A transform-based enlargement can make a
     // wrapped CJK label disappear on this MIPI panel, so the Agent output
-    // uses a real 20 px font instead of scaling an 18 px layer.
+    // uses a real 20/24 px font instead of scaling an 18 px layer.
     lv_obj_set_style_transform_scale(label, 256, 0);
     lv_obj_set_style_transform_pivot_x(label, 0, 0);
     lv_obj_set_style_transform_pivot_y(label, 0, 0);
@@ -257,8 +258,12 @@ static void create_ui(void)
     lv_obj_set_pos(g_pet_image, 20, 8);
     lv_obj_t *rail_status_title = make_label(rail_panel, "STATUS", muted, 14, 110, 22);
     lv_obj_set_pos(rail_status_title, 12, 116);
-    g_rail_state_label = make_label(rail_panel, "IDLE", graphite, 18, 92, 24);
-    lv_obj_set_pos(g_rail_state_label, 12, 142);
+    g_rail_state_label = make_label(rail_panel, "IDLE", graphite, 18, 112, 40);
+    // Status values are single-line labels. A narrow wrapped label can split
+    // WORKING or clip the bottom of DONE when the native CJK font metrics are
+    // taller than the old 24 px box.
+    lv_label_set_long_mode(g_rail_state_label, LV_LABEL_LONG_CLIP);
+    lv_obj_set_pos(g_rail_state_label, 12, 138);
 
     lv_obj_t *chat = lv_obj_create(root);
     lv_obj_set_pos(chat, 136, 42); lv_obj_set_size(chat, 492, 326); style_panel(chat, paper, line, 0);
@@ -267,9 +272,9 @@ static void create_ui(void)
     // The output is the main thing the user reads.  There is deliberately no
     // extra "AGENT / OUTPUT" caption or second input bubble competing for space.
     // The Agent output is intentionally larger than the compact rail/footer
-    // labels. Use the native 20 px CJK font so multiline wrapping remains
+    // labels. Use the native 24 px CJK font so multiline wrapping remains
     // reliable on the MIPI panel and never clips at the card edge.
-    g_agent_message_label = make_label(g_agent_bubble, g_agent_message, graphite, 18, 448, 282);
+    g_agent_message_label = make_label(g_agent_bubble, g_agent_message, graphite, 22, 448, 282);
     lv_obj_set_pos(g_agent_message_label, 12, 12);
 
     g_draft_box = lv_obj_create(root);

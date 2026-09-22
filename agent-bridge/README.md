@@ -20,7 +20,7 @@ Independent macOS Electron + TypeScript bridge for the custom ESP32-P4 Hakimi fi
   chat screen; the three HachimoDock buttons are voice PTT, Backspace, and
   Enter/send. Command+Tab remains a bridge-side combination action.
 - Uses a GB2312-backed Source Han Sans SC 14 CJK font for compact labels and a
-  native 20 px full CJK font for Agent output, so ordinary Chinese
+  native 24 px full CJK font for Agent output, so ordinary Chinese
   Codex/Doubao messages render without square placeholders. The larger Agent
   text is native glyph rendering rather than LVGL transform scaling, which
   keeps wrapped Chinese text visible on the physical MIPI panel.
