@@ -227,15 +227,23 @@ func screenImage() -> CGImage? {
     }
 }
 
+// macOS 15 marks CGWindowListCreateImage as obsolete at compile time, although
+// the symbol remains available on the supported desktop builds. Resolve it
+// once, rather than calling dlopen/dlsym on every OCR poll. Repeatedly opening
+// the current image without releasing the handle caused the long-lived helper
+// to retain loader state during continuous composer watching.
+typealias CreateWindowImage = @convention(c) (CGRect, CGWindowListOption, CGWindowID, CGWindowImageOption) -> Unmanaged<CGImage>?
+let createWindowImage: CreateWindowImage? = {
+    guard let handle = dlopen(nil, RTLD_LAZY),
+          let symbol = dlsym(handle, "CGWindowListCreateImage") else { return nil }
+    return unsafeBitCast(symbol, to: CreateWindowImage.self)
+}()
+
 func windowImage(for windowID: CGWindowID) -> CGImage? {
-    // macOS 15 marks CGWindowListCreateImage as obsolete at compile time,
-    // although the symbol remains available on the supported desktop builds.
-    // Resolve it dynamically so the helper still builds on the current SDK and
-    // can capture the Codex window without the bridge window occluding it.
-    typealias CreateImage = @convention(c) (CGRect, CGWindowListOption, CGWindowID, CGWindowImageOption) -> CGImage?
-    guard let symbol = dlsym(dlopen(nil, RTLD_LAZY), "CGWindowListCreateImage") else { return nil }
-    let createImage = unsafeBitCast(symbol, to: CreateImage.self)
-    return createImage(.null, .optionIncludingWindow, windowID, [.bestResolution, .boundsIgnoreFraming])
+    guard let image = createWindowImage?(.null, .optionIncludingWindow, windowID, [.bestResolution, .boundsIgnoreFraming]) else {
+        return nil
+    }
+    return image.takeRetainedValue()
 }
 
 func normalizedComposerToken(_ text: String) -> String {
@@ -320,21 +328,32 @@ func ocrComposerSnapshot(app: NSRunningApplication, appName: String) -> [String:
 func watchComposer(_ appName: String) -> Never {
     var previousSignature = ""
     while true {
-        let snapshot = composerSnapshot(appName)
-        let signature = [
-            String(describing: snapshot["supported"] ?? false),
-            String(describing: snapshot["focused"] ?? false),
-            String(describing: snapshot["text"] ?? ""),
-            String(describing: snapshot["cursor"] ?? 0),
-            String(describing: snapshot["source"] ?? ""),
-            String(describing: snapshot["detail"] ?? ""),
-        ].joined(separator: "|")
-        if signature != previousSignature {
-            emit(snapshot)
-            previousSignature = signature
+        var sleepMicros: useconds_t = 150_000
+        autoreleasepool {
+            // The OCR path creates autoreleased NSImage/CGImage/Vision objects
+            // on every poll. This helper is a long-lived process, so relying on
+            // the outer run-loop to drain those objects eventually grows into
+            // gigabytes of resident memory.
+            let snapshot = composerSnapshot(appName)
+            let signature = [
+                String(describing: snapshot["supported"] ?? false),
+                String(describing: snapshot["focused"] ?? false),
+                String(describing: snapshot["text"] ?? ""),
+                String(describing: snapshot["cursor"] ?? 0),
+                String(describing: snapshot["source"] ?? ""),
+                String(describing: snapshot["detail"] ?? ""),
+            ].joined(separator: "|")
+            if signature != previousSignature {
+                emit(snapshot)
+                previousSignature = signature
+            }
+            let source = String(describing: snapshot["source"] ?? "")
+            // OCR is a fallback for Electron's inaccessible composer, not an
+            // audio-rate signal. One poll per second keeps the draft responsive
+            // while avoiding an unbounded Vision/CoreGraphics allocation rate.
+            sleepMicros = source == "mac-ocr" ? 1_000_000 : 250_000
         }
-        let source = String(describing: snapshot["source"] ?? "")
-        usleep(source == "mac-ocr" ? 350_000 : 150_000)
+        usleep(sleepMicros)
     }
 }
 
