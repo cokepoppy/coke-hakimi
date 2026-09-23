@@ -1,4 +1,11 @@
-import { existsSync, readFileSync, statSync, readdirSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readSync,
+  statSync,
+  readdirSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentSnapshot } from './protocol';
@@ -77,7 +84,28 @@ function findRecentCodexFile(): { path?: string; mtime?: number } {
 function readRecentJsonl(path?: string): Record<string, unknown>[] {
   if (!path) return [];
   try {
-    const lines = readFileSync(path, 'utf8').split('\n').slice(-240);
+    // Codex session logs can grow to hundreds of megabytes because tool
+    // outputs are kept inline. Reading the whole file every publish cycle
+    // both exhausts Node's string limit and creates a large transient heap.
+    // The newest assistant record is at the end, so a bounded tail is enough
+    // for the live device summary and keeps memory use stable.
+    const stat = statSync(path);
+    const maxTailBytes = 8 * 1024 * 1024;
+    const start = Math.max(0, stat.size - maxTailBytes);
+    const length = stat.size - start;
+    const fd = openSync(path, 'r');
+    const buffer = Buffer.allocUnsafe(length);
+    try {
+      readSync(fd, buffer, 0, length, start);
+    } finally {
+      closeSync(fd);
+    }
+    const text = buffer.toString('utf8');
+    const firstLineBreak = start > 0 ? text.indexOf('\n') : -1;
+    const completeText = start > 0 && firstLineBreak >= 0
+      ? text.slice(firstLineBreak + 1)
+      : text;
+    const lines = completeText.split('\n').slice(-240);
     return lines.flatMap((line) => {
       try {
         const value = JSON.parse(line) as unknown;
