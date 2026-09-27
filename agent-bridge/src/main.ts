@@ -135,6 +135,13 @@ let inputDraftRevision = 0;
 let stopComposerWatcher: (() => void) | undefined;
 const audioSink = new SerialAudioSink((line) => broadcast('serial-audio-line', line));
 
+function resetDeviceSyncCache(): void {
+  // A device reboot clears its display state, but the bridge may still hold
+  // the same Agent snapshot key. Force the current snapshot to be sent again
+  // after every USB reconnect so the panel cannot remain on its boot screen.
+  lastDeviceAgentKey = '';
+}
+
 function broadcast(channel: string, payload: unknown): void {
   for (const target of BrowserWindow.getAllWindows()) target.webContents.send(channel, payload);
 }
@@ -436,6 +443,7 @@ function registerIpc(): void {
   });
   ipcMain.handle('device:connect', async (_event, path: string) => {
     const port = await serial.connect(path);
+    resetDeviceSyncCache();
     clearStaleDraftOnDeviceConnect();
     await publishState();
     return port;
@@ -492,6 +500,7 @@ async function autoConnectHakimi(): Promise<void> {
   if (!candidate) return;
   try {
     await serial.connect(candidate.path);
+    resetDeviceSyncCache();
     clearStaleDraftOnDeviceConnect();
   } catch (error) {
     lastError = `自动连接 Hakimi 失败：${error instanceof Error ? error.message : String(error)}`;
