@@ -459,6 +459,10 @@ esp_err_t hakimi_display_init(void)
     lv_display_set_flush_cb(display, lvgl_flush_cb);
     create_ui();
     update_ui();
+    // update_ui() populates the render caches before the task starts.  Force
+    // one initial LVGL pass here so the first frame reaches the panel even
+    // though the steady-state loop is intentionally dirty-only.
+    lv_timer_handler();
     if (xTaskCreate(display_task, "hakimi_display", 8192, NULL, 4, NULL) != pdPASS) return ESP_ERR_NO_MEM;
     return ESP_OK;
 }
