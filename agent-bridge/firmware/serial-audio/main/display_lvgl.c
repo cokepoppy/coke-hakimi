@@ -51,6 +51,20 @@ static volatile size_t g_last_agent_label_bytes;
 static volatile size_t g_last_draft_label_bytes;
 static volatile uint32_t g_flush_count;
 
+// Keep LVGL's full-frame MIPI flush event-driven. The upstream V3 renderer
+// redraws at a low cadence; repeatedly setting the same LVGL properties every
+// 33 ms invalidates the whole 640x480 frame and can expose a transient solid
+// cyan frame on the panel. These caches are only touched by display_task.
+static char g_rendered_state[sizeof(g_agent_state)];
+static char g_rendered_message[sizeof(g_agent_message)];
+static char g_rendered_draft[sizeof(g_input_draft) + 2];
+static int g_rendered_cursor = -1;
+static bool g_rendered_voice;
+static uint32_t g_rendered_working_frame = UINT32_MAX;
+static const lv_image_dsc_t *g_rendered_static_pet;
+static bool g_rendered_working;
+static uint32_t g_rendered_breathing_phase = UINT32_MAX;
+
 static lv_obj_t *g_rail_state_label;
 static lv_obj_t *g_pet_image;
 static lv_obj_t *g_agent_message_label;
@@ -203,12 +217,19 @@ static void update_status_visuals(const char *state, bool voice)
         // display, while avoiding an extra animation object in the LVGL tree.
         static const lv_opa_t breathing[] = {96, 128, 168, 220, LV_OPA_COVER, 220, 168, 128};
         const uint32_t phase = (lv_tick_get() / 120) % (sizeof(breathing) / sizeof(breathing[0]));
-        lv_obj_set_style_text_color(g_rail_state_label, lv_color_hex(0x12B8D6), 0);
-        lv_obj_set_style_text_opa(g_rail_state_label, breathing[phase], 0);
+        if (!g_rendered_working || g_rendered_breathing_phase != phase) {
+            lv_obj_set_style_text_color(g_rail_state_label, lv_color_hex(0x12B8D6), 0);
+            lv_obj_set_style_text_opa(g_rail_state_label, breathing[phase], 0);
+            g_rendered_breathing_phase = phase;
+        }
     } else {
-        lv_obj_set_style_text_color(g_rail_state_label, lv_color_hex(0x303638), 0);
-        lv_obj_set_style_text_opa(g_rail_state_label, LV_OPA_COVER, 0);
+        if (g_rendered_working || g_rendered_breathing_phase != UINT32_MAX) {
+            lv_obj_set_style_text_color(g_rail_state_label, lv_color_hex(0x303638), 0);
+            lv_obj_set_style_text_opa(g_rail_state_label, LV_OPA_COVER, 0);
+            g_rendered_breathing_phase = UINT32_MAX;
+        }
     }
+    g_rendered_working = working;
 }
 
 static void update_pet_animation(const char *state)
@@ -218,17 +239,19 @@ static void update_pet_animation(const char *state)
         // trick. Each frame shows the cat reaching, lifting, carrying, and
         // placing a brick, while the 96x96 canvas stays centered in the rail.
         const uint32_t frame = (lv_tick_get() / 180) % 4;
-        lv_image_set_src(g_pet_image, &hakimi_pet_working_frames[frame]);
+        if (g_rendered_static_pet || g_rendered_working_frame != frame) {
+            lv_image_set_src(g_pet_image, &hakimi_pet_working_frames[frame]);
+            g_rendered_static_pet = NULL;
+            g_rendered_working_frame = frame;
+        }
     } else {
         const lv_image_dsc_t *pet = pet_for_state(state);
-        static const lv_image_dsc_t *last_pet;
-        if (pet != last_pet) {
+        if (g_rendered_static_pet != pet || g_rendered_working_frame != UINT32_MAX) {
             lv_image_set_src(g_pet_image, pet);
-            last_pet = pet;
+            g_rendered_static_pet = pet;
+            g_rendered_working_frame = UINT32_MAX;
         }
     }
-    /* 136 px rail - 96 px sprite = 40 px; keep the sprite centered. */
-    lv_obj_set_pos(g_pet_image, 20, 8);
 }
 
 static void create_ui(void)
@@ -316,10 +339,17 @@ static void update_ui(void)
     int cursor = 0;
     bool voice = false;
     copy_state(state, sizeof(state), message, sizeof(message), draft, sizeof(draft), &cursor, &voice);
-    lv_label_set_text(g_rail_state_label, voice ? "LISTEN" : state);
+    const char *visible_state = voice ? "LISTEN" : state;
+    if (strcmp(g_rendered_state, visible_state) != 0) {
+        lv_label_set_text(g_rail_state_label, visible_state);
+        snprintf(g_rendered_state, sizeof(g_rendered_state), "%s", visible_state);
+    }
     update_status_visuals(state, voice);
     const char *visible_message = message[0] ? message : "Ready for input.";
-    lv_label_set_text(g_agent_message_label, visible_message);
+    if (strcmp(g_rendered_message, visible_message) != 0) {
+        lv_label_set_text(g_agent_message_label, visible_message);
+        snprintf(g_rendered_message, sizeof(g_rendered_message), "%s", visible_message);
+    }
     g_last_agent_label_bytes = strlen(visible_message);
     update_pet_animation(state);
     char visible_draft[sizeof(g_input_draft) + 2];
@@ -331,9 +361,17 @@ static void update_ui(void)
     visible_draft[safe_cursor] = '|';
     memcpy(visible_draft + safe_cursor + 1, draft + safe_cursor, length - safe_cursor);
     visible_draft[length + 1] = '\0';
-    lv_label_set_text(g_draft_label, visible_draft[0] == '|' && length == 0 ? "|" : visible_draft);
+    const char *visible_draft_text = visible_draft[0] == '|' && length == 0 ? "|" : visible_draft;
+    if (g_rendered_cursor != cursor || strcmp(g_rendered_draft, visible_draft_text) != 0) {
+        lv_label_set_text(g_draft_label, visible_draft_text);
+        snprintf(g_rendered_draft, sizeof(g_rendered_draft), "%s", visible_draft_text);
+        g_rendered_cursor = cursor;
+    }
     g_last_draft_label_bytes = strlen(visible_draft);
-    lv_obj_set_style_border_color(g_draft_box, voice ? lv_color_hex(0xE8A126) : lv_color_hex(0x12B8D6), 0);
+    if (g_rendered_voice != voice) {
+        lv_obj_set_style_border_color(g_draft_box, voice ? lv_color_hex(0xE8A126) : lv_color_hex(0x12B8D6), 0);
+        g_rendered_voice = voice;
+    }
 }
 
 static void display_task(void *arg)
@@ -344,8 +382,8 @@ static void display_task(void *arg)
         // minimal hardware loop. Without advancing it, the initial frame can
         // render while later label invalidations remain visually stale.
         lv_tick_inc(33);
-        lv_timer_handler();
         update_ui();
+        lv_timer_handler();
         vTaskDelay(pdMS_TO_TICKS(33));
     }
 }
