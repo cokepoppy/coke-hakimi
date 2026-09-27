@@ -209,8 +209,9 @@ static const lv_image_dsc_t *pet_for_state(const char *state)
     return &hakimi_pet_idle;
 }
 
-static void update_status_visuals(const char *state, bool voice)
+static bool update_status_visuals(const char *state, bool voice)
 {
+    bool changed = false;
     const bool working = !voice && strcmp(state, "WORKING") == 0;
     if (working) {
         // A stepped opacity curve reads as a breathing light on the small
@@ -221,19 +222,23 @@ static void update_status_visuals(const char *state, bool voice)
             lv_obj_set_style_text_color(g_rail_state_label, lv_color_hex(0x12B8D6), 0);
             lv_obj_set_style_text_opa(g_rail_state_label, breathing[phase], 0);
             g_rendered_breathing_phase = phase;
+            changed = true;
         }
     } else {
         if (g_rendered_working || g_rendered_breathing_phase != UINT32_MAX) {
             lv_obj_set_style_text_color(g_rail_state_label, lv_color_hex(0x303638), 0);
             lv_obj_set_style_text_opa(g_rail_state_label, LV_OPA_COVER, 0);
             g_rendered_breathing_phase = UINT32_MAX;
+            changed = true;
         }
     }
     g_rendered_working = working;
+    return changed;
 }
 
-static void update_pet_animation(const char *state)
+static bool update_pet_animation(const char *state)
 {
+    bool changed = false;
     if (strcmp(state, "WORKING") == 0) {
         // Working uses real generated sprite frames, not a scale/breathing
         // trick. Each frame shows the cat reaching, lifting, carrying, and
@@ -243,6 +248,7 @@ static void update_pet_animation(const char *state)
             lv_image_set_src(g_pet_image, &hakimi_pet_working_frames[frame]);
             g_rendered_static_pet = NULL;
             g_rendered_working_frame = frame;
+            changed = true;
         }
     } else {
         const lv_image_dsc_t *pet = pet_for_state(state);
@@ -250,8 +256,10 @@ static void update_pet_animation(const char *state)
             lv_image_set_src(g_pet_image, pet);
             g_rendered_static_pet = pet;
             g_rendered_working_frame = UINT32_MAX;
+            changed = true;
         }
     }
+    return changed;
 }
 
 static void create_ui(void)
@@ -331,8 +339,9 @@ static void copy_state(char *state, size_t state_size, char *message, size_t mes
     xSemaphoreGive(g_state_mutex);
 }
 
-static void update_ui(void)
+static bool update_ui(void)
 {
+    bool changed = false;
     char state[sizeof(g_agent_state)];
     char message[sizeof(g_agent_message)];
     char draft[sizeof(g_input_draft)];
@@ -343,15 +352,17 @@ static void update_ui(void)
     if (strcmp(g_rendered_state, visible_state) != 0) {
         lv_label_set_text(g_rail_state_label, visible_state);
         snprintf(g_rendered_state, sizeof(g_rendered_state), "%s", visible_state);
+        changed = true;
     }
-    update_status_visuals(state, voice);
+    changed |= update_status_visuals(state, voice);
     const char *visible_message = message[0] ? message : "Ready for input.";
     if (strcmp(g_rendered_message, visible_message) != 0) {
         lv_label_set_text(g_agent_message_label, visible_message);
         snprintf(g_rendered_message, sizeof(g_rendered_message), "%s", visible_message);
+        changed = true;
     }
     g_last_agent_label_bytes = strlen(visible_message);
-    update_pet_animation(state);
+    changed |= update_pet_animation(state);
     char visible_draft[sizeof(g_input_draft) + 2];
     size_t length = strlen(draft);
     size_t safe_cursor = cursor < 0 ? 0 : (size_t)cursor;
@@ -366,12 +377,15 @@ static void update_ui(void)
         lv_label_set_text(g_draft_label, visible_draft_text);
         snprintf(g_rendered_draft, sizeof(g_rendered_draft), "%s", visible_draft_text);
         g_rendered_cursor = cursor;
+        changed = true;
     }
     g_last_draft_label_bytes = strlen(visible_draft);
     if (g_rendered_voice != voice) {
         lv_obj_set_style_border_color(g_draft_box, voice ? lv_color_hex(0xE8A126) : lv_color_hex(0x12B8D6), 0);
         g_rendered_voice = voice;
+        changed = true;
     }
+    return changed;
 }
 
 static void display_task(void *arg)
@@ -382,8 +396,11 @@ static void display_task(void *arg)
         // minimal hardware loop. Without advancing it, the initial frame can
         // render while later label invalidations remain visually stale.
         lv_tick_inc(33);
-        update_ui();
-        lv_timer_handler();
+        // The full-frame MIPI renderer can flush the whole panel whenever its
+        // refresh timer is serviced.  This firmware has no LVGL input devices
+        // or LVGL animations; update_ui() drives all visual changes, so only
+        // service the timer when a widget actually changed.
+        if (update_ui()) lv_timer_handler();
         vTaskDelay(pdMS_TO_TICKS(33));
     }
 }
