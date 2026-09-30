@@ -35,10 +35,10 @@ extern const lv_image_dsc_t hakimi_pet_done;
 #define LCD_LANE_BITRATE_MBPS 800
 #define LCD_BACKLIGHT_GPIO GPIO_NUM_26
 #define LCD_RESET_GPIO GPIO_NUM_27
-#define LCD_ROW_CHUNK 16
 
 static const char *TAG = "hakimi-display-lvgl";
 static esp_lcd_panel_handle_t g_panel;
+static uint16_t *g_physical_frame;
 static SemaphoreHandle_t g_state_mutex;
 static bool g_voice_active;
 static char g_agent_state[16] = "IDLE";
@@ -124,47 +124,64 @@ static size_t utf8_byte_offset_for_character_index(const char *text, int charact
     return offset;
 }
 
+static bool lvgl_color_trans_done(esp_lcd_panel_handle_t panel, esp_lcd_dpi_panel_event_data_t *edata, void *user_ctx)
+{
+    (void)panel;
+    (void)edata;
+    lv_display_flush_ready((lv_display_t *)user_ctx);
+    return false;
+}
+
 static void lvgl_flush_cb(lv_display_t *display, const lv_area_t *area, uint8_t *px_map)
 {
     (void)display;
     (void)area;
     const uint16_t *source = (const uint16_t *)px_map;
-    static uint16_t row[LCD_WIDTH];
     size_t agent_ink_pixels = 0;
     size_t draft_ink_pixels = 0;
     const uint16_t draft_background = (uint16_t)(((0xFB >> 3) << 11) | ((0xFA >> 2) << 5) | (0xF6 >> 3));
-    for (int panel_y = 0; panel_y < LCD_HEIGHT; panel_y += LCD_ROW_CHUNK) {
-        const int height = panel_y + LCD_ROW_CHUNK > LCD_HEIGHT ? LCD_HEIGHT - panel_y : LCD_ROW_CHUNK;
-        for (int row_offset = 0; row_offset < height; row_offset += 1) {
-            const int physical_y = panel_y + row_offset;
-            for (int physical_x = 0; physical_x < LCD_WIDTH; physical_x += 1) {
-                const int logical_x = physical_y;
-                const int logical_y = UI_HEIGHT - 1 - physical_x;
-                const uint16_t pixel = source[logical_y * UI_WIDTH + logical_x];
-                row[physical_x] = pixel;
-                // Count dark glyph pixels, rather than merely counting pixels
-                // different from the card fill. Borders and antialiasing can
-                // otherwise make an empty output card look non-empty.
-                const uint8_t red = (uint8_t)(((pixel >> 11) & 0x1F) * 255 / 31);
-                const uint8_t green = (uint8_t)(((pixel >> 5) & 0x3F) * 255 / 63);
-                const uint8_t blue = (uint8_t)((pixel & 0x1F) * 255 / 31);
-                const bool dark_ink = red < 150 && green < 155 && blue < 155;
-                // This provides a software rendering proof because this MIPI
-                // panel has no readback path for screenshots.
-                if (logical_x >= 150 && logical_x < 622 && logical_y >= 58 && logical_y < 352 && dark_ink) {
-                    agent_ink_pixels += 1;
-                }
-                if (logical_x >= 22 && logical_x < 618 && logical_y >= 371 && logical_y < 419 && pixel != draft_background && dark_ink) {
-                    draft_ink_pixels += 1;
-                }
+    if (!g_physical_frame) {
+        // Keep LVGL from waiting forever if the physical frame could not be
+        // allocated during initialization. The initialization path reports
+        // the allocation failure and the device remains audio-capable.
+        lv_display_flush_ready(display);
+        return;
+    }
+    for (int physical_y = 0; physical_y < LCD_HEIGHT; physical_y += 1) {
+        for (int physical_x = 0; physical_x < LCD_WIDTH; physical_x += 1) {
+            const int logical_x = physical_y;
+            const int logical_y = UI_HEIGHT - 1 - physical_x;
+            const uint16_t pixel = source[logical_y * UI_WIDTH + logical_x];
+            g_physical_frame[physical_y * LCD_WIDTH + physical_x] = pixel;
+            // Count dark glyph pixels, rather than merely counting pixels
+            // different from the card fill. Borders and antialiasing can
+            // otherwise make an empty output card look non-empty.
+            const uint8_t red = (uint8_t)(((pixel >> 11) & 0x1F) * 255 / 31);
+            const uint8_t green = (uint8_t)(((pixel >> 5) & 0x3F) * 255 / 63);
+            const uint8_t blue = (uint8_t)((pixel & 0x1F) * 255 / 31);
+            const bool dark_ink = red < 150 && green < 155 && blue < 155;
+            // This provides a software rendering proof because this MIPI
+            // panel has no readback path for screenshots.
+            if (logical_x >= 150 && logical_x < 622 && logical_y >= 58 && logical_y < 352 && dark_ink) {
+                agent_ink_pixels += 1;
             }
-            ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(g_panel, 0, physical_y, LCD_WIDTH, physical_y + 1, row));
+            if (logical_x >= 22 && logical_x < 618 && logical_y >= 371 && logical_y < 419 && pixel != draft_background && dark_ink) {
+                draft_ink_pixels += 1;
+            }
         }
     }
     g_last_agent_ink_pixels = agent_ink_pixels;
     g_last_draft_ink_pixels = draft_ink_pixels;
     g_flush_count += 1;
-    lv_display_flush_ready(display);
+    // Submit exactly one full-frame DMA transfer. The callback below marks the
+    // LVGL buffer reusable only after the DPI driver has copied this frame;
+    // issuing hundreds of row transfers back-to-back races the MIPI queue and
+    // causes ESP_ERR_INVALID_STATE/abort on the ST7701 panel.
+    const esp_err_t result = esp_lcd_panel_draw_bitmap(g_panel, 0, 0, LCD_WIDTH, LCD_HEIGHT, g_physical_frame);
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG, "draw LCD frame failed: %s", esp_err_to_name(result));
+        lv_display_flush_ready(display);
+    }
 }
 
 static void style_panel(lv_obj_t *object, lv_color_t color, lv_color_t border, int radius)
@@ -452,11 +469,22 @@ esp_err_t hakimi_display_init(void)
     lv_display_t *display = lv_display_create(UI_WIDTH, UI_HEIGHT);
     lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB565);
     const size_t buffer_bytes = UI_WIDTH * UI_HEIGHT * sizeof(uint16_t);
+    g_physical_frame = heap_caps_aligned_calloc(64, 1, LCD_WIDTH * LCD_HEIGHT * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!g_physical_frame) return ESP_ERR_NO_MEM;
     void *buffer_one = heap_caps_malloc(buffer_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     void *buffer_two = heap_caps_malloc(buffer_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buffer_one || !buffer_two) return ESP_ERR_NO_MEM;
     lv_display_set_buffers(display, buffer_one, buffer_two, buffer_bytes, LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(display, lvgl_flush_cb);
+    const esp_lcd_dpi_panel_event_callbacks_t callbacks = {
+        .on_color_trans_done = lvgl_color_trans_done,
+        .on_refresh_done = NULL,
+    };
+    ESP_RETURN_ON_ERROR(
+        esp_lcd_dpi_panel_register_event_callbacks(g_panel, &callbacks, display),
+        TAG,
+        "register MIPI frame callback"
+    );
     create_ui();
     update_ui();
     // update_ui() populates the render caches before the task starts.  Force

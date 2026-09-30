@@ -149,7 +149,7 @@ static gpio_num_t test_gpio_for_control(const char *control)
     return GPIO_NUM_NC;
 }
 
-static void simulate_button_press(gpio_num_t gpio, uint32_t duration_ms)
+static void simulate_button_press(gpio_num_t gpio, uint32_t duration_ms, bool simulated)
 {
     // The real buttons are active-low switches to ground.  For an automated
     // hardware test, temporarily drive the same net low, then restore the
@@ -159,7 +159,11 @@ static void simulate_button_press(gpio_num_t gpio, uint32_t duration_ms)
     // the same hold path used by voice and configurable shortcut gestures.
     if (duration_ms < 40) duration_ms = 40;
     if (duration_ms > 3000) duration_ms = 3000;
-    input_event_simulated = true;
+    // Normal input/simulate calls are dry-run events so smoke tests do not
+    // unexpectedly invoke Fn or change the foreground Mac app.  The explicit
+    // live=true mode is reserved for the end-to-end voice-loopback test and
+    // still exercises this same GPIO sampler/debounce path.
+    input_event_simulated = simulated;
     gpio_set_direction(gpio, GPIO_MODE_OUTPUT);
     gpio_set_level(gpio, 0);
     emit_input_levels();
@@ -504,8 +508,11 @@ static void control_task(void *arg)
                 emit_control_ack(topic, "unsupported test control");
                 continue;
             }
-            simulate_button_press(gpio, (uint32_t)copy_json_int(line, "durationMs", 120));
-            emit_control_ack(topic, "simulated GPIO button press");
+            const bool live = copy_json_int(line, "live", 0) != 0;
+            simulate_button_press(gpio, (uint32_t)copy_json_int(line, "durationMs", 120), !live);
+            emit_control_ack(topic, live
+                ? "live simulated GPIO button press"
+                : "simulated GPIO button press");
             continue;
         }
         if (strcmp(topic, "display/query") == 0) {
