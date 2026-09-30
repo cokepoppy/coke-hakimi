@@ -140,9 +140,11 @@ static void simulate_button_press(gpio_num_t gpio)
     // keep the low interval well below the SW1 long-press threshold.
     gpio_set_direction(gpio, GPIO_MODE_OUTPUT);
     gpio_set_level(gpio, 0);
+    emit_input_levels();
     vTaskDelay(pdMS_TO_TICKS(120));
     gpio_set_direction(gpio, GPIO_MODE_INPUT);
     gpio_set_pull_mode(gpio, GPIO_PULLUP_ONLY);
+    emit_input_levels();
 }
 
 static void emit_control_ack(const char *topic, const char *detail)
