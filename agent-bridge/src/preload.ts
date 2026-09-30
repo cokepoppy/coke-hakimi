@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('hakimiBridge', {
   activate: (appName: string): Promise<void> => ipcRenderer.invoke('mac:activate', appName),
   key: (name: string, phase: 'down' | 'up' | 'tap'): Promise<{ ok: boolean; detail: string }> => ipcRenderer.invoke('mac:key', name, phase),
   commandTab: (): Promise<{ ok: boolean; detail: string }> => ipcRenderer.invoke('mac:command-tab'),
+  shortcut: (name: string): Promise<{ ok: boolean; detail: string }> => ipcRenderer.invoke('mac:shortcut', name),
   startAudioTest: (): Promise<{ ok: boolean; detail: string }> => ipcRenderer.invoke('audio:test-start'),
   stopAudioTest: (): Promise<{ ok: boolean; detail: string }> => ipcRenderer.invoke('audio:test-stop'),
   openDocs: (): Promise<void> => ipcRenderer.invoke('app:open-docs'),

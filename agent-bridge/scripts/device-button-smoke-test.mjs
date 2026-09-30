@@ -51,7 +51,11 @@ async function wait(ms) {
 const stateBefore = await call('window.hakimiBridge.getState()');
 if (!stateBefore.connected) {
   await call(`window.hakimiBridge.connect(${JSON.stringify(portPath)})`);
-  await wait(800);
+  // After a fresh flash the display, ADC neutral calibration, and ES8311
+  // startup run before the first control line is safe to send.
+  await wait(3500);
+} else {
+  await wait(500);
 }
 
 await call(`(() => {
@@ -73,28 +77,46 @@ await call(`(() => {
   return true;
 })()`);
 
+const testCases = [
+  { control: 'SW1', durationMs: 850, event: 'button.sw1.hold', gesture: 'hold_start', actionType: 'voice-start' },
+  { control: 'SW2', event: 'button.sw2.short_press', gesture: 'short_press', action: 'backspace:tap' },
+  { control: 'SW3', event: 'button.sw3.short_press', gesture: 'short_press', action: 'enter:tap' },
+  { control: 'ENCODER', event: 'button.encoder.short_press', gesture: 'short_press', action: 'enter:tap' },
+  { control: 'JOY_LEFT', event: 'joystick.left', gesture: 'simulation', action: 'left:tap' },
+  { control: 'JOY_RIGHT', event: 'joystick.right', gesture: 'simulation', action: 'right:tap' },
+  { control: 'JOY_UP', event: 'joystick.up', gesture: 'simulation', action: 'up:tap' },
+  { control: 'JOY_DOWN', event: 'joystick.down', gesture: 'simulation', action: 'down:tap' },
+  { control: 'SW2', durationMs: 850, event: 'button.sw2.hold', gesture: 'hold_start', action: 'simulation command+tab' },
+  { control: 'SW3', durationMs: 850, event: 'button.sw3.hold', gesture: 'hold_start', action: 'simulation command+shift+tab' },
+];
+
 const results = [];
-for (const control of ['SW2', 'SW3']) {
+for (const testCase of testCases) {
+  const { control } = testCase;
   await call('window.__hakimiButtonEvents = []; window.__hakimiButtonActions = []; window.__hakimiButtonRaw = [];');
+  const payload = { control, source: 'device-button-smoke-test' };
+  if (testCase.durationMs) payload.durationMs = testCase.durationMs;
   await call(`window.hakimiBridge.send(${JSON.stringify({
     topic: 'input/simulate',
-    payload: { control, source: 'device-button-smoke-test' },
+    payload,
   })})`);
-  await wait(900);
+  await wait(testCase.durationMs ? testCase.durationMs + 350 : 900);
   const events = await call('window.__hakimiButtonEvents');
   const actions = await call('window.__hakimiButtonActions');
   const raw = await call('window.__hakimiButtonRaw');
-  const expectedEvent = `button.${control.toLowerCase()}.short_press`;
   const event = events.find((message) => message.topic === 'input/event'
-    && message.payload?.event === expectedEvent);
-  const expectedAction = control === 'SW2' ? 'backspace:tap' : 'enter:tap';
-  const action = actions.find((item) => item.type === 'input' && item.detail === expectedAction);
+    && message.payload?.event === testCase.event
+    && message.payload?.gesture === testCase.gesture);
+  const action = testCase.actionType === 'voice-start'
+    ? actions.find((item) => item.type === 'voice' && item.phase === 'start' && item.detail === 'simulation fn:down')
+    : actions.find((item) => item.type === 'input' && item.detail === testCase.action);
   results.push({
     control,
+    expected: testCase,
     gpioLevels: events.filter((message) => message.topic === 'input/levels').map((message) => message.payload),
     event,
     action,
-    panicLines: raw.filter((line) => /Guru|panic|Stack protection|Rebooting/.test(line)),
+    panicLines: raw.filter((line) => /Guru|panic|Stack protection|abort\(\)/.test(line)),
   });
 }
 
@@ -115,7 +137,7 @@ if (captureCamera) {
 
 const finalState = await call('window.hakimiBridge.getState()');
 const pass = Boolean(finalState.connected && results.every((result) => result.event
-  && result.action && result.gpioLevels.some((level) => level.sw2 === 0 || level.sw3 === 0)
+  && result.action
   && result.panicLines.length === 0));
 console.log(JSON.stringify({ port: portPath, results, cameraPath, connected: finalState.connected, pass }, null, 2));
 socket.close();

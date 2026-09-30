@@ -14,6 +14,7 @@ declare global {
       activate(appName: string): Promise<void>;
       key(name: string, phase: 'down' | 'up' | 'tap'): Promise<{ ok: boolean; detail: string }>;
       commandTab(): Promise<{ ok: boolean; detail: string }>;
+      shortcut(name: string): Promise<{ ok: boolean; detail: string }>;
       startAudioTest(): Promise<{ ok: boolean; detail: string }>;
       stopAudioTest(): Promise<{ ok: boolean; detail: string }>;
       openDocs(): Promise<void>;

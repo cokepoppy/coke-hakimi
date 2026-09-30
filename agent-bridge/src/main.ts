@@ -10,6 +10,7 @@ import {
   focusCodexWindow,
   listAudioInputs,
   postKey,
+  postShortcut,
   watchAgentComposer,
   type ComposerSnapshot,
 } from './macos';
@@ -405,12 +406,23 @@ async function handleDeviceMessage(message: DeviceMessage): Promise<void> {
   const event = normalizedEvent(payload);
   const currentGesture = gesture(payload);
   const action = String(payload.action || '').toLowerCase();
+  const source = String(payload.source || '').toLowerCase();
   const isVoice = action === 'voice_ptt' || event === 'button.sw1.hold' || event === 'voice_ptt';
+  const isSimulationDryRun = source === 'simulation'
+    && (isVoice || action === 'command_tab' || action === 'command_shift_tab');
   if (isVoice && (currentGesture === 'hold_start' || currentGesture === 'start')) {
+    if (isSimulationDryRun) {
+      broadcast('bridge-action', { type: 'voice', phase: 'start', detail: 'simulation fn:down' });
+      return;
+    }
     await beginVoiceInput();
     return;
   }
   if (isVoice && (currentGesture === 'hold_end' || currentGesture === 'end' || currentGesture === 'release')) {
+    if (isSimulationDryRun) {
+      broadcast('bridge-action', { type: 'voice', phase: 'end', detail: 'simulation fn:up' });
+      return;
+    }
     await endVoiceInput();
     return;
   }
@@ -424,6 +436,15 @@ async function handleDeviceMessage(message: DeviceMessage): Promise<void> {
   else if (event === 'button.sw2.short_press') result = await postKey('backspace', 'tap');
   else if (event === 'button.sw3.short_press') result = await postKey('enter', 'tap');
   else if (action === 'agent_enter') result = await postKey('enter', 'tap');
+  else if (action === 'command_tab' && ['hold_start', 'start', 'short_press'].includes(currentGesture)) {
+    result = isSimulationDryRun
+      ? { ok: true, detail: 'simulation command+tab' }
+      : await postShortcut('command_tab');
+  } else if (action === 'command_shift_tab' && ['hold_start', 'start', 'short_press'].includes(currentGesture)) {
+    result = isSimulationDryRun
+      ? { ok: true, detail: 'simulation command+shift+tab' }
+      : await postShortcut('command_shift_tab');
+  }
   if (result) broadcast('bridge-action', { type: 'input', event, detail: result.detail });
 }
 
@@ -466,6 +487,7 @@ function registerIpc(): void {
   });
   ipcMain.handle('mac:key', (_event, name: string, phase: 'down' | 'up' | 'tap') => postKey(name, phase));
   ipcMain.handle('mac:command-tab', () => commandTab());
+  ipcMain.handle('mac:shortcut', (_event, name: string) => postShortcut(name));
   ipcMain.handle('audio:test-start', () => startAudioMonitor());
   ipcMain.handle('audio:test-stop', () => stopAudioMonitor());
   ipcMain.handle('app:open-docs', () => shell.openExternal('https://github.com/YizhengWw/HachimoDock'));

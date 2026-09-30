@@ -7,6 +7,7 @@
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
 #include "driver/uart.h"
+#include "esp_adc/adc_oneshot.h"
 #include "esp_codec_dev.h"
 #include "esp_codec_dev_defaults.h"
 #include "esp_check.h"
@@ -18,6 +19,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "mbedtls/base64.h"
+#include "soc/adc_channel.h"
 
 #include "display.h"
 
@@ -42,14 +44,28 @@
 #define SW1_GPIO GPIO_NUM_50
 #define SW2_GPIO GPIO_NUM_49
 #define SW3_GPIO GPIO_NUM_5
+#define JOYSTICK_CENTER_GPIO GPIO_NUM_4
+#define JOYSTICK_X_GPIO GPIO_NUM_21
+#define JOYSTICK_Y_GPIO GPIO_NUM_20
+#define JOYSTICK_X_CHANNEL ADC1_GPIO21_CHANNEL
+#define JOYSTICK_Y_CHANNEL ADC1_GPIO20_CHANNEL
 #define BUTTON_SAMPLE_MS 5
 #define BUTTON_DEBOUNCE_MS 25
 #define BUTTON_LONG_PRESS_MS 700
+#define JOYSTICK_ACTIVATION_DELTA 900
+#define JOYSTICK_RELEASE_DELTA 500
+#define JOYSTICK_REPEAT_DELAY_MS 350
+#define JOYSTICK_REPEAT_INTERVAL_MS 140
 #define CONTROL_LINE_BYTES 8192
 #define CONTROL_RX_BUFFER_BYTES 8192
 
 static const char *TAG = "hakimi-serial-audio";
 static SemaphoreHandle_t uart_output_mutex;
+static adc_oneshot_unit_handle_t joystick_adc;
+static int joystick_center_x;
+static int joystick_center_y;
+static bool joystick_ready;
+static volatile bool input_event_simulated;
 
 static void emit_line(const char *format, ...)
 {
@@ -102,11 +118,12 @@ static void emit_pcm(uint32_t sequence, const uint8_t *pcm)
 static void emit_input_event(const char *control, const char *event, const char *gesture, const char *action)
 {
     emit_line(
-        "{\"topic\":\"input/event\",\"payload\":{\"control\":\"%s\",\"event\":\"%s\",\"gesture\":\"%s\",\"action\":\"%s\",\"tsMs\":%lld}}\n",
+        "{\"topic\":\"input/event\",\"payload\":{\"control\":\"%s\",\"event\":\"%s\",\"gesture\":\"%s\",\"action\":\"%s\",\"source\":\"%s\",\"tsMs\":%lld}}\n",
         control,
         event,
         gesture,
         action,
+        input_event_simulated ? "simulation" : "device",
         (long long)(esp_timer_get_time() / 1000)
     );
 }
@@ -114,10 +131,11 @@ static void emit_input_event(const char *control, const char *event, const char 
 static void emit_input_levels(void)
 {
     emit_line(
-        "{\"topic\":\"input/levels\",\"payload\":{\"sw1\":%d,\"sw2\":%d,\"sw3\":%d,\"activeLow\":true,\"tsMs\":%lld}}\n",
+        "{\"topic\":\"input/levels\",\"payload\":{\"sw1\":%d,\"sw2\":%d,\"sw3\":%d,\"encoder\":%d,\"activeLow\":true,\"tsMs\":%lld}}\n",
         gpio_get_level(SW1_GPIO),
         gpio_get_level(SW2_GPIO),
         gpio_get_level(SW3_GPIO),
+        gpio_get_level(JOYSTICK_CENTER_GPIO),
         (long long)(esp_timer_get_time() / 1000)
     );
 }
@@ -127,24 +145,162 @@ static gpio_num_t test_gpio_for_control(const char *control)
     if (strcmp(control, "SW1") == 0) return SW1_GPIO;
     if (strcmp(control, "SW2") == 0) return SW2_GPIO;
     if (strcmp(control, "SW3") == 0) return SW3_GPIO;
+    if (strcmp(control, "ENCODER") == 0 || strcmp(control, "JOYSTICK_CENTER") == 0) return JOYSTICK_CENTER_GPIO;
     return GPIO_NUM_NC;
 }
 
-static void simulate_button_press(gpio_num_t gpio)
+static void simulate_button_press(gpio_num_t gpio, uint32_t duration_ms)
 {
     // The real buttons are active-low switches to ground.  For an automated
     // hardware test, temporarily drive the same net low, then restore the
     // exact input-pullup configuration used by button_task().  This exercises
     // the GPIO sampler and debounce path without fabricating an input/event
-    // line at the Electron layer.  SW2/SW3 are short-press-only controls;
-    // keep the low interval well below the SW1 long-press threshold.
+    // line at the Electron layer.  Tests can pass a long duration to exercise
+    // the same hold path used by voice and configurable shortcut gestures.
+    if (duration_ms < 40) duration_ms = 40;
+    if (duration_ms > 3000) duration_ms = 3000;
+    input_event_simulated = true;
     gpio_set_direction(gpio, GPIO_MODE_OUTPUT);
     gpio_set_level(gpio, 0);
     emit_input_levels();
-    vTaskDelay(pdMS_TO_TICKS(120));
+    vTaskDelay(pdMS_TO_TICKS(duration_ms));
     gpio_set_direction(gpio, GPIO_MODE_INPUT);
     gpio_set_pull_mode(gpio, GPIO_PULLUP_ONLY);
     emit_input_levels();
+    // Let the sampler finish its release debounce before returning to device
+    // provenance, so both hold_start and hold_end are marked as simulated.
+    vTaskDelay(pdMS_TO_TICKS(BUTTON_DEBOUNCE_MS + BUTTON_SAMPLE_MS * 2));
+    input_event_simulated = false;
+}
+
+typedef enum {
+    JOYSTICK_CENTER = 0,
+    JOYSTICK_LEFT,
+    JOYSTICK_RIGHT,
+    JOYSTICK_UP,
+    JOYSTICK_DOWN,
+} joystick_direction_t;
+
+static const char *joystick_event_name(joystick_direction_t direction)
+{
+    switch (direction) {
+        case JOYSTICK_LEFT: return "joystick.left";
+        case JOYSTICK_RIGHT: return "joystick.right";
+        case JOYSTICK_UP: return "joystick.up";
+        case JOYSTICK_DOWN: return "joystick.down";
+        default: return NULL;
+    }
+}
+
+static void emit_joystick_direction(joystick_direction_t direction, const char *gesture)
+{
+    const char *event = joystick_event_name(direction);
+    if (!event) return;
+    const char *action = direction == JOYSTICK_LEFT ? "cursor_left"
+        : direction == JOYSTICK_RIGHT ? "cursor_right"
+        : direction == JOYSTICK_UP ? "cursor_up"
+        : "cursor_down";
+    emit_input_event("JOYSTICK", event, gesture, action);
+}
+
+static void simulate_joystick_direction(const char *control)
+{
+    joystick_direction_t direction = JOYSTICK_CENTER;
+    if (strcmp(control, "JOY_LEFT") == 0) direction = JOYSTICK_LEFT;
+    else if (strcmp(control, "JOY_RIGHT") == 0) direction = JOYSTICK_RIGHT;
+    else if (strcmp(control, "JOY_UP") == 0) direction = JOYSTICK_UP;
+    else if (strcmp(control, "JOY_DOWN") == 0) direction = JOYSTICK_DOWN;
+    if (direction != JOYSTICK_CENTER) {
+        input_event_simulated = true;
+        emit_joystick_direction(direction, "simulation");
+        input_event_simulated = false;
+    }
+}
+
+static bool read_joystick_raw(int *x, int *y)
+{
+    if (!joystick_ready || !joystick_adc) return false;
+    return adc_oneshot_read(joystick_adc, JOYSTICK_X_CHANNEL, x) == ESP_OK
+        && adc_oneshot_read(joystick_adc, JOYSTICK_Y_CHANNEL, y) == ESP_OK;
+}
+
+static joystick_direction_t detect_joystick_direction(int x, int y, joystick_direction_t previous)
+{
+    const int dx = x - joystick_center_x;
+    const int dy = y - joystick_center_y;
+    const int abs_x = abs(dx);
+    const int abs_y = abs(dy);
+    const int x_threshold = previous == JOYSTICK_LEFT || previous == JOYSTICK_RIGHT
+        ? JOYSTICK_RELEASE_DELTA : JOYSTICK_ACTIVATION_DELTA;
+    const int y_threshold = previous == JOYSTICK_UP || previous == JOYSTICK_DOWN
+        ? JOYSTICK_RELEASE_DELTA : JOYSTICK_ACTIVATION_DELTA;
+    const bool x_active = abs_x >= x_threshold;
+    const bool y_active = abs_y >= y_threshold;
+    if (!x_active && !y_active) return JOYSTICK_CENTER;
+    if (x_active && (!y_active || abs_x * JOYSTICK_ACTIVATION_DELTA >= abs_y * JOYSTICK_ACTIVATION_DELTA)) {
+        return dx < 0 ? JOYSTICK_LEFT : JOYSTICK_RIGHT;
+    }
+    // The official V3 board's positive Y rail points upward when the device
+    // is held in its normal orientation; lower ADC values therefore mean down.
+    return dy < 0 ? JOYSTICK_DOWN : JOYSTICK_UP;
+}
+
+static esp_err_t setup_joystick(void)
+{
+    const gpio_config_t center_config = {
+        .pin_bit_mask = 1ULL << JOYSTICK_CENTER_GPIO,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_RETURN_ON_ERROR(gpio_config(&center_config), TAG, "joystick center GPIO init failed");
+
+    const adc_oneshot_unit_init_cfg_t unit_config = {
+        .unit_id = ADC_UNIT_1,
+        .ulp_mode = ADC_ULP_MODE_DISABLE,
+    };
+    esp_err_t result = adc_oneshot_new_unit(&unit_config, &joystick_adc);
+    if (result != ESP_OK) {
+        ESP_LOGW(TAG, "joystick ADC init failed: %s", esp_err_to_name(result));
+        return ESP_OK;
+    }
+    const adc_oneshot_chan_cfg_t channel_config = {
+        .atten = ADC_ATTEN_DB_12,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+    };
+    result = adc_oneshot_config_channel(joystick_adc, JOYSTICK_X_CHANNEL, &channel_config);
+    if (result == ESP_OK) result = adc_oneshot_config_channel(joystick_adc, JOYSTICK_Y_CHANNEL, &channel_config);
+    if (result != ESP_OK) {
+        ESP_LOGW(TAG, "joystick ADC channel init failed: %s", esp_err_to_name(result));
+        adc_oneshot_del_unit(joystick_adc);
+        joystick_adc = NULL;
+        return ESP_OK;
+    }
+
+    int sum_x = 0;
+    int sum_y = 0;
+    int valid_samples = 0;
+    for (int sample = 0; sample < 24; sample += 1) {
+        int x = 0;
+        int y = 0;
+        if (adc_oneshot_read(joystick_adc, JOYSTICK_X_CHANNEL, &x) == ESP_OK
+            && adc_oneshot_read(joystick_adc, JOYSTICK_Y_CHANNEL, &y) == ESP_OK) {
+            sum_x += x;
+            sum_y += y;
+            valid_samples += 1;
+        }
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
+    if (valid_samples < 8) {
+        ESP_LOGW(TAG, "joystick neutral calibration failed: only %d samples", valid_samples);
+        return ESP_OK;
+    }
+    joystick_center_x = sum_x / valid_samples;
+    joystick_center_y = sum_y / valid_samples;
+    joystick_ready = true;
+    ESP_LOGI(TAG, "joystick ready: neutral x=%d y=%d", joystick_center_x, joystick_center_y);
+    return ESP_OK;
 }
 
 static void emit_control_ack(const char *topic, const char *detail)
@@ -181,6 +337,7 @@ typedef struct {
     const char *control;
     const char *event;
     const char *short_action;
+    const char *long_action;
     bool stable_pressed;
     bool long_sent;
     uint32_t transition_ms;
@@ -191,10 +348,13 @@ static void button_task(void *arg)
 {
     (void)arg;
     button_state_t buttons[] = {
-        {SW1_GPIO, "SW1", "button.sw1", "voice_ptt", false, false, 0, 0},
-        {SW2_GPIO, "SW2", "button.sw2", "backspace", false, false, 0, 0},
-        {SW3_GPIO, "SW3", "button.sw3", "agent_enter", false, false, 0, 0},
+        {SW1_GPIO, "SW1", "button.sw1", "voice_ptt", "voice_ptt", false, false, 0, 0},
+        {SW2_GPIO, "SW2", "button.sw2", "backspace", "command_tab", false, false, 0, 0},
+        {SW3_GPIO, "SW3", "button.sw3", "agent_enter", "command_shift_tab", false, false, 0, 0},
+        {JOYSTICK_CENTER_GPIO, "ENCODER", "button.encoder", "agent_enter", "command_tab", false, false, 0, 0},
     };
+    joystick_direction_t joystick_direction = JOYSTICK_CENTER;
+    uint32_t joystick_next_repeat_ms = 0;
     while (true) {
         for (size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i += 1) {
             button_state_t *button = &buttons[i];
@@ -208,8 +368,10 @@ static void button_task(void *arg)
                     button->pressed_ms = 0;
                     button->long_sent = false;
                 } else if (button->long_sent) {
-                    if (i == 0) hakimi_display_set_voice_active(false);
-                    emit_input_event(button->control, "button.sw1.hold", "hold_end", "voice_ptt");
+                    if (strcmp(button->control, "SW1") == 0) hakimi_display_set_voice_active(false);
+                    char event_name[32];
+                    snprintf(event_name, sizeof(event_name), "%s.hold", button->event);
+                    emit_input_event(button->control, event_name, "hold_end", button->long_action);
                 } else {
                     char event_name[32];
                     snprintf(event_name, sizeof(event_name), "%s.short_press", button->event);
@@ -220,11 +382,31 @@ static void button_task(void *arg)
             }
             if (button->stable_pressed) {
                 button->pressed_ms += BUTTON_SAMPLE_MS;
-                if (i == 0 && !button->long_sent && button->pressed_ms >= BUTTON_LONG_PRESS_MS) {
+                if (!button->long_sent && button->long_action[0] != '\0'
+                    && button->pressed_ms >= BUTTON_LONG_PRESS_MS) {
                     button->long_sent = true;
-                    hakimi_display_set_voice_active(true);
-                    emit_input_event(button->control, "button.sw1.hold", "hold_start", "voice_ptt");
+                    if (strcmp(button->control, "SW1") == 0) hakimi_display_set_voice_active(true);
+                    char event_name[32];
+                    snprintf(event_name, sizeof(event_name), "%s.hold", button->event);
+                    emit_input_event(button->control, event_name, "hold_start", button->long_action);
                 }
+            }
+        }
+        int joystick_x = 0;
+        int joystick_y = 0;
+        if (read_joystick_raw(&joystick_x, &joystick_y)) {
+            const joystick_direction_t next_direction = detect_joystick_direction(
+                joystick_x, joystick_y, joystick_direction);
+            const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+            if (next_direction != joystick_direction) {
+                joystick_direction = next_direction;
+                joystick_next_repeat_ms = now_ms + JOYSTICK_REPEAT_DELAY_MS;
+                if (joystick_direction != JOYSTICK_CENTER) {
+                    emit_joystick_direction(joystick_direction, "direction_start");
+                }
+            } else if (joystick_direction != JOYSTICK_CENTER && now_ms >= joystick_next_repeat_ms) {
+                emit_joystick_direction(joystick_direction, "direction_repeat");
+                joystick_next_repeat_ms = now_ms + JOYSTICK_REPEAT_INTERVAL_MS;
             }
         }
         vTaskDelay(pdMS_TO_TICKS(BUTTON_SAMPLE_MS));
@@ -312,12 +494,17 @@ static void control_task(void *arg)
         if (strcmp(topic, "input/simulate") == 0) {
             char control[16];
             copy_json_string(line, "control", control, sizeof(control));
+            if (strncmp(control, "JOY_", 4) == 0) {
+                simulate_joystick_direction(control);
+                emit_control_ack(topic, "simulated joystick direction");
+                continue;
+            }
             const gpio_num_t gpio = test_gpio_for_control(control);
             if (gpio == GPIO_NUM_NC) {
                 emit_control_ack(topic, "unsupported test control");
                 continue;
             }
-            simulate_button_press(gpio);
+            simulate_button_press(gpio, (uint32_t)copy_json_int(line, "durationMs", 120));
             emit_control_ack(topic, "simulated GPIO button press");
             continue;
         }
@@ -361,6 +548,7 @@ static esp_err_t setup_buttons(void)
         .intr_type = GPIO_INTR_DISABLE,
     };
     ESP_RETURN_ON_ERROR(gpio_config(&config), TAG, "button GPIO init failed");
+    ESP_RETURN_ON_ERROR(setup_joystick(), TAG, "joystick init failed");
     // Button events call the JSONL emitter, which traverses the stdio/USB
     // output stack.  3072 bytes is insufficient on ESP-IDF 5.5 and causes a
     // Stack protection fault exactly when SW2/SW3 are released.  Keep this

@@ -19,6 +19,13 @@ const KEY_CODES: Record<string, number> = {
   fn: 63,
 };
 
+const SHORTCUTS: Record<string, { keyCode: number; modifiers: string }> = {
+  command_tab: { keyCode: 48, modifiers: 'command down' },
+  command_shift_tab: { keyCode: 48, modifiers: 'command down, shift down' },
+  command_w: { keyCode: 13, modifiers: 'command down' },
+  command_l: { keyCode: 37, modifiers: 'command down' },
+};
+
 async function runAppleScript(script: string): Promise<string> {
   const result = await execFileAsync('osascript', ['-e', script], { timeout: 2500 });
   return result.stdout.trim();
@@ -141,16 +148,24 @@ export async function postKey(name: string, phase: 'down' | 'up' | 'tap'): Promi
   }
 }
 
-export async function commandTab(): Promise<{ ok: boolean; detail: string }> {
+export async function postShortcut(name: string): Promise<{ ok: boolean; detail: string }> {
   if (process.platform !== 'darwin') return { ok: false, detail: '仅支持 macOS' };
+  const shortcut = SHORTCUTS[name];
+  if (!shortcut) return { ok: false, detail: `未知组合键: ${name}` };
   try {
-    const helper = await runNativeHelper(['command-tab']);
-    if (helper) return { ok: helper.ok ?? false, detail: helper.detail || 'Command+Tab' };
-    await runAppleScript('tell application "System Events" to key code 55 using {command down}');
-    return { ok: true, detail: 'Command+Tab' };
+    if (name === 'command_tab') {
+      const helper = await runNativeHelper(['command-tab']);
+      if (helper) return { ok: helper.ok ?? false, detail: helper.detail || 'Command+Tab' };
+    }
+    await runAppleScript(`tell application "System Events" to key code ${shortcut.keyCode} using {${shortcut.modifiers}}`);
+    return { ok: true, detail: name.replaceAll('_', '+') };
   } catch (error) {
     return { ok: false, detail: error instanceof Error ? error.message : String(error) };
   }
+}
+
+export async function commandTab(): Promise<{ ok: boolean; detail: string }> {
+  return postShortcut('command_tab');
 }
 
 export async function listAudioInputs(): Promise<import('./protocol').AudioInputInfo[]> {
