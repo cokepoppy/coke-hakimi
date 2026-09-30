@@ -67,6 +67,8 @@ static int joystick_center_y;
 static bool joystick_ready;
 static volatile bool input_event_simulated;
 
+static bool read_joystick_raw(int *x, int *y);
+
 static void emit_line(const char *format, ...)
 {
     va_list args;
@@ -130,12 +132,35 @@ static void emit_input_event(const char *control, const char *event, const char 
 
 static void emit_input_levels(void)
 {
+    int joystick_x = -1;
+    int joystick_y = -1;
+    const bool joystick_readable = read_joystick_raw(&joystick_x, &joystick_y);
+    const char *joystick_direction = "unavailable";
+    if (joystick_readable) {
+        const int dx = joystick_x - joystick_center_x;
+        const int dy = joystick_y - joystick_center_y;
+        const int abs_x = abs(dx);
+        const int abs_y = abs(dy);
+        if (abs_x < JOYSTICK_ACTIVATION_DELTA && abs_y < JOYSTICK_ACTIVATION_DELTA) {
+            joystick_direction = "center";
+        } else if (abs_x >= abs_y) {
+            joystick_direction = dx < 0 ? "left" : "right";
+        } else {
+            joystick_direction = dy < 0 ? "down" : "up";
+        }
+    }
     emit_line(
-        "{\"topic\":\"input/levels\",\"payload\":{\"sw1\":%d,\"sw2\":%d,\"sw3\":%d,\"encoder\":%d,\"activeLow\":true,\"tsMs\":%lld}}\n",
+        "{\"topic\":\"input/levels\",\"payload\":{\"sw1\":%d,\"sw2\":%d,\"sw3\":%d,\"encoder\":%d,\"activeLow\":true,\"joystick\":{\"ready\":%s,\"x\":%d,\"y\":%d,\"centerX\":%d,\"centerY\":%d,\"direction\":\"%s\"},\"tsMs\":%lld}}\n",
         gpio_get_level(SW1_GPIO),
         gpio_get_level(SW2_GPIO),
         gpio_get_level(SW3_GPIO),
         gpio_get_level(JOYSTICK_CENTER_GPIO),
+        joystick_readable ? "true" : "false",
+        joystick_x,
+        joystick_y,
+        joystick_center_x,
+        joystick_center_y,
+        joystick_direction,
         (long long)(esp_timer_get_time() / 1000)
     );
 }
@@ -185,6 +210,8 @@ typedef enum {
     JOYSTICK_DOWN,
 } joystick_direction_t;
 
+static joystick_direction_t detect_joystick_direction(int x, int y, joystick_direction_t previous);
+
 static const char *joystick_event_name(joystick_direction_t direction)
 {
     switch (direction) {
@@ -214,11 +241,25 @@ static void simulate_joystick_direction(const char *control)
     else if (strcmp(control, "JOY_RIGHT") == 0) direction = JOYSTICK_RIGHT;
     else if (strcmp(control, "JOY_UP") == 0) direction = JOYSTICK_UP;
     else if (strcmp(control, "JOY_DOWN") == 0) direction = JOYSTICK_DOWN;
-    if (direction != JOYSTICK_CENTER) {
-        input_event_simulated = true;
-        emit_joystick_direction(direction, "simulation");
-        input_event_simulated = false;
-    }
+    if (direction == JOYSTICK_CENTER) return;
+
+    // Keep the simulator on the same direction detector as the physical ADC
+    // path.  The old simulator emitted a final event directly, which proved
+    // only that Electron handled a fabricated event and could hide ADC or
+    // threshold regressions.
+    const int center_x = joystick_ready ? joystick_center_x : 2048;
+    const int center_y = joystick_ready ? joystick_center_y : 2048;
+    int x = center_x;
+    int y = center_y;
+    if (direction == JOYSTICK_LEFT) x -= JOYSTICK_ACTIVATION_DELTA + 100;
+    else if (direction == JOYSTICK_RIGHT) x += JOYSTICK_ACTIVATION_DELTA + 100;
+    else if (direction == JOYSTICK_UP) y += JOYSTICK_ACTIVATION_DELTA + 100;
+    else if (direction == JOYSTICK_DOWN) y -= JOYSTICK_ACTIVATION_DELTA + 100;
+    const joystick_direction_t detected = detect_joystick_direction(x, y, JOYSTICK_CENTER);
+    if (detected != direction) return;
+    input_event_simulated = true;
+    emit_joystick_direction(detected, "simulation");
+    input_event_simulated = false;
 }
 
 static bool read_joystick_raw(int *x, int *y)

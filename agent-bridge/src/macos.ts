@@ -132,8 +132,15 @@ export async function postKey(name: string, phase: 'down' | 'up' | 'tap'): Promi
   const code = KEY_CODES[name];
   if (code === undefined) return { ok: false, detail: `未知按键: ${name}` };
   try {
-    const helper = await runNativeHelper(['key', name, phase]);
-    if (helper) return { ok: helper.ok ?? false, detail: helper.detail || `${name}:${phase}` };
+    // On this Mac, the native CGEvent helper can report success while an
+    // Electron/TextEdit text control does not move its caret.  AppleScript's
+    // System Events path is slower but has observable delivery for discrete
+    // tap keys.  Keep the helper for Fn down/up, where a held key state is
+    // required by Doubao, and for future non-tap HID gestures.
+    if (!(phase === 'tap' && name !== 'fn')) {
+      const helper = await runNativeHelper(['key', name, phase]);
+      if (helper) return { ok: helper.ok ?? false, detail: helper.detail || `${name}:${phase}` };
+    }
     const downUp = `tell application "System Events" to key code ${code}`;
     if (phase === 'tap' || name === 'fn') {
       await runAppleScript(downUp);

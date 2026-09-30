@@ -454,6 +454,19 @@ let keyCodes: [String: CGKeyCode] = [
     "fn": 63,
 ]
 
+func postKeyboardEvent(_ event: CGEvent) {
+    // Posting only to the HID tap reports success even when the event is
+    // swallowed before it reaches a sandboxed Electron/TextEdit window.  The
+    // same event targeted at the current frontmost PID is accepted by both
+    // native and Chromium text controls, while the tap remains a fallback for
+    // cases such as the global Fn/shortcut path.
+    if let frontmost = NSWorkspace.shared.frontmostApplication {
+        event.postToPid(frontmost.processIdentifier)
+    } else {
+        event.post(tap: .cghidEventTap)
+    }
+}
+
 func sendKey(_ name: String, _ phase: String) {
     guard let code = keyCodes[name] else { fail("未知按键：\(name)") }
     guard let source = CGEventSource(stateID: .hidSystemState) else { fail("无法创建 CGEventSource") }
@@ -465,7 +478,7 @@ func sendKey(_ name: String, _ phase: String) {
             keyDown: current == "down"
         ) else { fail("无法创建键盘事件：\(name)") }
         if name == "fn" { event.flags.insert(.maskSecondaryFn) }
-        event.post(tap: .cghidEventTap)
+        postKeyboardEvent(event)
     }
     emit(["ok": true, "detail": "\(name):\(phase)"])
 }
