@@ -361,7 +361,11 @@ static esp_err_t setup_buttons(void)
         .intr_type = GPIO_INTR_DISABLE,
     };
     ESP_RETURN_ON_ERROR(gpio_config(&config), TAG, "button GPIO init failed");
-    if (xTaskCreate(button_task, "hakimi_buttons", 3072, NULL, 8, NULL) != pdPASS) {
+    // Button events call the JSONL emitter, which traverses the stdio/USB
+    // output stack.  3072 bytes is insufficient on ESP-IDF 5.5 and causes a
+    // Stack protection fault exactly when SW2/SW3 are released.  Keep this
+    // task isolated from the display/control stacks with a safe margin.
+    if (xTaskCreate(button_task, "hakimi_buttons", 6144, NULL, 8, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     emit_input_levels();
