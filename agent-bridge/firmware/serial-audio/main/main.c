@@ -122,6 +122,29 @@ static void emit_input_levels(void)
     );
 }
 
+static gpio_num_t test_gpio_for_control(const char *control)
+{
+    if (strcmp(control, "SW1") == 0) return SW1_GPIO;
+    if (strcmp(control, "SW2") == 0) return SW2_GPIO;
+    if (strcmp(control, "SW3") == 0) return SW3_GPIO;
+    return GPIO_NUM_NC;
+}
+
+static void simulate_button_press(gpio_num_t gpio)
+{
+    // The real buttons are active-low switches to ground.  For an automated
+    // hardware test, temporarily drive the same net low, then restore the
+    // exact input-pullup configuration used by button_task().  This exercises
+    // the GPIO sampler and debounce path without fabricating an input/event
+    // line at the Electron layer.  SW2/SW3 are short-press-only controls;
+    // keep the low interval well below the SW1 long-press threshold.
+    gpio_set_direction(gpio, GPIO_MODE_OUTPUT);
+    gpio_set_level(gpio, 0);
+    vTaskDelay(pdMS_TO_TICKS(120));
+    gpio_set_direction(gpio, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(gpio, GPIO_PULLUP_ONLY);
+}
+
 static void emit_control_ack(const char *topic, const char *detail)
 {
     size_t agent_message_bytes = 0;
@@ -282,6 +305,18 @@ static void control_task(void *arg)
         copy_json_string(line, "topic", topic, sizeof(topic));
         if (strcmp(topic, "input/debug") == 0) {
             emit_input_levels();
+            continue;
+        }
+        if (strcmp(topic, "input/simulate") == 0) {
+            char control[16];
+            copy_json_string(line, "control", control, sizeof(control));
+            const gpio_num_t gpio = test_gpio_for_control(control);
+            if (gpio == GPIO_NUM_NC) {
+                emit_control_ack(topic, "unsupported test control");
+                continue;
+            }
+            simulate_button_press(gpio);
+            emit_control_ack(topic, "simulated GPIO button press");
             continue;
         }
         if (strcmp(topic, "display/query") == 0) {
