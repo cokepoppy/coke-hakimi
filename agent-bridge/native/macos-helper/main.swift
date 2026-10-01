@@ -477,8 +477,17 @@ func sendKey(_ name: String, _ phase: String) {
             virtualKey: code,
             keyDown: current == "down"
         ) else { fail("无法创建键盘事件：\(name)") }
-        if name == "fn" { event.flags.insert(.maskSecondaryFn) }
-        postKeyboardEvent(event)
+        if name == "fn" {
+            // Fn is the global Doubao dictation trigger. It must enter through
+            // the HID event tap, not be targeted at the currently focused app.
+            // The modifier flags describe the state after this event: keeping
+            // the flag on key-up leaves Doubao in dictation until a later mouse
+            // or keyboard event repairs the state.
+            event.flags = current == "down" ? [.maskSecondaryFn] : []
+            event.post(tap: .cghidEventTap)
+        } else {
+            postKeyboardEvent(event)
+        }
     }
     emit(["ok": true, "detail": "\(name):\(phase)"])
 }
