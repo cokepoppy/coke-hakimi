@@ -136,6 +136,7 @@ let composerSnapshot: ComposerSnapshot | undefined;
 let composerSignature = '';
 let inputDraftRevision = 0;
 let stopComposerWatcher: (() => void) | undefined;
+let autoConnectInFlight = false;
 const audioSink = new SerialAudioSink((line) => broadcast('serial-audio-line', line));
 
 function resetDeviceSyncCache(): void {
@@ -528,22 +529,35 @@ function createWindow(): void {
 }
 
 async function autoConnectHakimi(): Promise<void> {
-  const devices = await serial.list();
-  // The Hakimi ESP32-P4 board uses the CH343 USB serial bridge. Restrict the
-  // automatic connection to that known VID/PID so another serial device is
-  // never opened just because it happens to be present at startup.
-  const candidate = devices.find((port) => {
-    const vendor = port.vendorId?.toLowerCase();
-    const product = port.productId?.toLowerCase();
-    return vendor === '1a86' && product === '55d3';
-  });
-  if (!candidate) return;
+  if (autoConnectInFlight) return;
+  autoConnectInFlight = true;
   try {
+    const devices = await serial.list();
+    // The Hakimi ESP32-P4 board uses the CH343 USB serial bridge. Restrict the
+    // automatic connection to that known VID/PID so another serial device is
+    // never opened just because it happens to be present at startup.
+    const candidate = devices.find((port) => {
+      const vendor = port.vendorId?.toLowerCase();
+      const product = port.productId?.toLowerCase();
+      return vendor === '1a86' && product === '55d3';
+    });
+    if (!candidate) return;
+    const current = serial.info();
+    const alreadyConnected = serial.isConnected()
+      && current?.path === candidate.path
+      && current.vendorId?.toLowerCase() === '1a86'
+      && current.productId?.toLowerCase() === '55d3';
+    if (alreadyConnected) return;
+    // A USB replug can leave the renderer connected to a stale or unrelated
+    // serial path. Always replace that connection with the known Hakimi
+    // CH343 device instead of trusting the first enumerated port.
     await serial.connect(candidate.path);
     resetDeviceSyncCache();
     clearStaleDraftOnDeviceConnect();
   } catch (error) {
     lastError = `自动连接 Hakimi 失败：${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    autoConnectInFlight = false;
   }
 }
 
@@ -554,7 +568,13 @@ app.whenReady().then(() => {
   });
   createWindow();
   void autoConnectHakimi().then(() => publishState());
-  setInterval(() => void publishState(), 2500);
+  setInterval(() => {
+    void autoConnectHakimi()
+      .catch((error) => {
+        lastError = `自动重连 Hakimi 失败：${error instanceof Error ? error.message : String(error)}`;
+      })
+      .finally(() => void publishState());
+  }, 2500);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
