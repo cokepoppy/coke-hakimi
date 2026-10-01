@@ -117,6 +117,8 @@ const agents = new AgentRegistry();
 let lastMessage: DeviceMessage | undefined;
 let lastError: string | undefined;
 let voiceKeyDown = false;
+let voiceStartInFlight = false;
+let voiceReleasePending = false;
 let audioMonitor = false;
 let lastDeviceAgentKey = '';
 let audioInputsCache: Awaited<ReturnType<typeof listAudioInputs>> = [];
@@ -289,17 +291,33 @@ function gesture(payload: Record<string, unknown>): string {
 }
 
 async function beginVoiceInput(): Promise<void> {
-  const focus = await focusCodexWindow('Codex');
-  if (!focus.focused) lastError = focus.detail;
-  if (voiceKeyDown) return;
-  const key = await postKey('fn', 'down');
-  voiceKeyDown = key.ok;
-  refreshComposerStatus();
-  broadcast('bridge-action', { type: 'voice', phase: 'start', detail: `${focus.detail}；${key.detail}` });
-  await publishState();
+  if (voiceKeyDown || voiceStartInFlight) return;
+  voiceStartInFlight = true;
+  voiceReleasePending = false;
+  try {
+    const focus = await focusCodexWindow('Codex');
+    if (!focus.focused) lastError = focus.detail;
+    const key = await postKey('fn', 'down');
+    voiceKeyDown = key.ok;
+    refreshComposerStatus();
+    broadcast('bridge-action', { type: 'voice', phase: 'start', detail: `${focus.detail}；${key.detail}` });
+    await publishState();
+  } finally {
+    voiceStartInFlight = false;
+  }
+  // A physical release can arrive while focusCodexWindow is still doing its
+  // Accessibility work. Do not lose that release or leave Fn/audio held.
+  if (voiceReleasePending) {
+    voiceReleasePending = false;
+    await endVoiceInput();
+  }
 }
 
 async function endVoiceInput(): Promise<void> {
+  if (voiceStartInFlight) {
+    voiceReleasePending = true;
+    return;
+  }
   if (!voiceKeyDown) return;
   const key = await postKey('fn', 'up');
   voiceKeyDown = false;
