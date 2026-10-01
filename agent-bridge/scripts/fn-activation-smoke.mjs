@@ -57,10 +57,10 @@ await call(`(() => {
   window.__hakimiFnEvents = [];
   window.__hakimiFnActions = [];
   window.__hakimiFnEventsUnsub = window.hakimiBridge.onDeviceMessage((message) => {
-    if (message?.topic === 'input/event') window.__hakimiFnEvents.push(message);
+    if (message?.topic === 'input/event') window.__hakimiFnEvents.push({ message, atMs: performance.now() });
   });
   window.__hakimiFnActionsUnsub = window.hakimiBridge.onAction((action) => {
-    window.__hakimiFnActions.push(action);
+    window.__hakimiFnActions.push({ action, atMs: performance.now() });
   });
   return true;
 })()`);
@@ -95,12 +95,16 @@ const result = await call(`(async () => ({
   actions: window.__hakimiFnActions,
 }))()`);
 
-const start = result.events.find((message) => message.payload?.control === 'SW1'
-  && message.payload?.gesture === 'hold_start');
-const end = result.events.find((message) => message.payload?.control === 'SW1'
-  && message.payload?.gesture === 'hold_end');
-const voiceStart = result.actions.find((action) => action.type === 'voice' && action.phase === 'start');
-const voiceEnd = result.actions.find((action) => action.type === 'voice' && action.phase === 'end');
+const startRecord = result.events.find((record) => record.message.payload?.control === 'SW1'
+  && record.message.payload?.gesture === 'hold_start');
+const endRecord = result.events.find((record) => record.message.payload?.control === 'SW1'
+  && record.message.payload?.gesture === 'hold_end');
+const voiceStartRecord = result.actions.find((record) => record.action.type === 'voice' && record.action.phase === 'start');
+const voiceEndRecord = result.actions.find((record) => record.action.type === 'voice' && record.action.phase === 'end');
+const start = startRecord?.message;
+const end = endRecord?.message;
+const voiceStart = voiceStartRecord?.action;
+const voiceEnd = voiceEndRecord?.action;
 const pass = Boolean(
   result.state.connected
   && mid.audioForwarding
@@ -121,6 +125,14 @@ console.log(JSON.stringify({
   },
   sw1: { start, end },
   voice: { start: voiceStart, end: voiceEnd },
+  latencyMs: {
+    eventToVoiceStart: startRecord && voiceStartRecord
+      ? Math.round(voiceStartRecord.atMs - startRecord.atMs)
+      : null,
+    eventToVoiceEnd: startRecord && voiceEndRecord
+      ? Math.round(voiceEndRecord.atMs - startRecord.atMs)
+      : null,
+  },
   final: {
     connected: result.state.connected,
     audioForwarding: result.state.audioForwarding,

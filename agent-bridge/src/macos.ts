@@ -111,7 +111,11 @@ export async function focusCodexWindow(appName = 'Codex'): Promise<{ focused: bo
     // resolves both bundle names, and this explicit activation fallback makes
     // the voice key work even when no standalone "Codex" app alias exists.
     await activateApp(appName === 'Codex' ? 'ChatGPT' : appName);
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    // The voice key is a push-to-talk path. A long settling delay here makes
+    // SW1 feel dead and delays Doubao's microphone indicator. The native AX
+    // focus helper already handles the case where the window needs a little
+    // more time; keep only a short hand-off delay before asking it to focus.
+    await new Promise((resolve) => setTimeout(resolve, 120));
     const helper = await runNativeHelper(['focus', appName]);
     if (helper) {
       return {
